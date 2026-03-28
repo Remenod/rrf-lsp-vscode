@@ -84,6 +84,10 @@ connection.onHover((params: HoverParams): Hover | null => {
           contents: {
             kind: MarkupKind.Markdown,
             value: markdownContent
+          },
+          range: {
+            start: { line: position.line, character: start },
+            end: { line: position.line, character: end }
           }
         };
       }
