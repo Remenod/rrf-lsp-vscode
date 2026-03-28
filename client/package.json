@@ -23,12 +23,8 @@
       {
         "id": "rrf-gcode",
         "aliases": [
-          "G-code",
-          "rrf-G-code",
-          "RRF-G-code",
-          "gcode",
-          "rrf-gcode",
-          "RRF-gcode"
+          "RRF GCode",
+          "RepRapFirmware"
         ],
         "extensions": [
           ".gcode",
