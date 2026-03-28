@@ -1,6 +1,8 @@
 import os
 import json
 import re
+import urllib.request
+import urllib.error
 from bs4 import BeautifulSoup, NavigableString, Tag
 
 def to_markdown(node):
@@ -77,19 +79,21 @@ def get_inner_markdown(node):
 
 def generate_lsp_database():
     script_dir = os.path.dirname(os.path.abspath(__file__))
-    output_path = os.path.join(script_dir, '../server/data/gcode-commands.json')
-    
-    html_path = os.path.join(script_dir, 'Gcodes.html')
-    html_fallback_path = os.path.join(script_dir, 'Gcodes')
+    output_dir = os.path.join(script_dir, '../server/data')
+    os.makedirs(output_dir, exist_ok=True)
+    output_path = os.path.join(output_dir, 'gcode-commands.json')
 
-    print("Loading HTML file...")
+    url = "https://docs.duet3d.com/User_manual/Reference/Gcodes"
+
+    print(f"Loading HTML page from {url}...")
     
     try:
-        with open(html_path, 'r', encoding='utf-8') as f:
-            html_content = f.read()
-    except FileNotFoundError:
-        with open(html_fallback_path, 'r', encoding='utf-8') as f:
-            html_content = f.read()
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'})
+        with urllib.request.urlopen(req) as response:
+            html_content = response.read().decode('utf-8')
+    except urllib.error.URLError as e:
+        print(f"Page loading error: {e}")
+        return
 
     html_content = html_content.replace('<template', '<div').replace('</template>', '</div>')
 
@@ -99,7 +103,7 @@ def generate_lsp_database():
 
     lsp_database["_meta"] = {
             "title": "Duet3D G-Code Dictionary for LSP",
-            "source_url": "https://docs.duet3d.com/en/User_manual/Reference/Gcodes",
+            "source_url": url,
             "license": "CC BY-SA 4.0",
             "original_author": "Duet3D",
             "parsed_and_converted_by": "Remenod",
