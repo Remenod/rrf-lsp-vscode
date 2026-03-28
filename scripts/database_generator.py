@@ -156,7 +156,7 @@ def generate_lsp_database():
         json.dump(lsp_database, f, ensure_ascii=False, indent=2)
 
     print(f"Success! The database has been saved to '{output_path}'")
-    print(f"Commands processed: {len(lsp_database)}")
+    print(f"Commands processed: {len(lsp_database) - 1}")  # Minus 1 due to the _meta block
 
 if __name__ == "__main__":
     generate_lsp_database()
