@@ -3,13 +3,9 @@
   "description": "Server for G-code Duet3D RRF Language Server",
   "author": "remenod",
   "license": "GPL-3.0-only",
-  "version": "1.0.0",
+  "version": "0.1.0",
   "engines": {
     "node": "*"
-  },
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/Remenod/rrf-lsp-vscode"
   },
   "dependencies": {
     "vscode-languageserver": "^9.0.1",

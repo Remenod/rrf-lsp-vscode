@@ -1,0 +1,16 @@
+scripts/**
+
+client/src/**
+server/src/**
+**/*.ts
+**/*.map
+tsconfig.json
+client/tsconfig.json
+server/tsconfig.json
+**/*.tsbuildinfo
+**/package-lock.json
+
+.vscode/**
+.gitignore
+.gitattributes
+.github/**

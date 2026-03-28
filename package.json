@@ -4,13 +4,17 @@
   "description": "G-code Duet3D RRF Language Server",
   "author": "remenod",
   "license": "GPL-3.0-only",
-  "version": "1.0.0",
+  "version": "0.1.0",
   "publisher": "remenod",
   "categories": [
     "Programming Languages"
   ],
   "engines": {
     "vscode": "^1.75.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Remenod/rrf-lsp-vscode"
   },
   "activationEvents": [
     "onLanguage:rrf-gcode",
@@ -53,6 +57,7 @@
   "devDependencies": {
     "@types/node": "^20.0.0",
     "@types/vscode": "^1.75.0",
+    "@vscode/vsce": "^3.7.1",
     "typescript": "^5.0.0"
   }
 }
