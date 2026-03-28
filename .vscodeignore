@@ -1,0 +1,14 @@
+scripts/**
+
+client/src/**
+server/src/**
+**/*.ts
+**/*.map
+tsconfig.json
+client/tsconfig.json
+server/tsconfig.json
+
+.vscode/**
+.gitignore
+.gitattributes
+.github/**
