@@ -1,21 +1,18 @@
 {
-  "name": "REPLACE_ME",
-  "description": "REPLACE_ME",
-  "author": "REPLACE_ME",
-  "license": "MIT",
-  "version": "0.0.1",
-  "publisher": "REPLACE_ME",
-  "repository": {
-    "type": "git",
-    "url": "REPLACE_ME"
-  },
+  "name": "gcode-duet3d-lsp",
+  "description": "G-code LSP for Duet3D",
+  "author": "remenod",
+  "license": "GPL-3.0-only",
+  "version": "1.0.0",
+  "publisher": "remenod",
+  "categories": [],
   "engines": {
     "vscode": "^1.75.0"
   },
   "dependencies": {
-    "vscode-languageclient": "^8.1.0"
+    "vscode-languageclient": "^9.0.1"
   },
   "devDependencies": {
-    "@types/vscode": "^1.81.0"
+    "@types/vscode": "^1.110.0"
   }
 }
