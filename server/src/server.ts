@@ -83,6 +83,10 @@ connection.onHover((params: HoverParams): Hover | null => {
   while ((match = wordMatch.exec(line)) !== null) {
     const start = match.index;
     const end = start + match[0].length;
+
+    if (position.character < start || position.character > end)
+      continue;
+
     const rawMatch = match[0];
 
     if (line[end] === '.' && (match[0] === 'var' || match[0] === 'global' || match[0] === 'param'))
@@ -97,75 +101,72 @@ connection.onHover((params: HoverParams): Hover | null => {
         continue;
     }
 
-    if (position.character >= start && position.character <= end) {
+    let doc = null;
+    let baseUrl = "";
+    let command = "";
 
-      let doc = null;
-      let baseUrl = "";
-      let command = "";
+    if (/^(?:[GM]\d+(?:\.\d+)?|T-?\d*)$/i.test(rawMatch)) {
+      const commandUpper = rawMatch.toUpperCase();
 
-      if (/^(?:[GM]\d+(?:\.\d+)?|T-?\d*)$/i.test(rawMatch)) {
-        const commandUpper = rawMatch.toUpperCase();
-
-        if (commandUpper.startsWith('T') && commandUpper.length > 1) {
-          const toolNumber = parseInt(commandUpper.substring(1));
-          if (!isNaN(toolNumber) && (toolNumber < -1 || toolNumber > 49))
-            return null;
-        }
-
-        const docKey = commandUpper.startsWith('T') ? 'T' : commandUpper;
-        doc = gcodeData[docKey];
-
-        if (doc) {
-          baseUrl = "https://docs.duet3d.com/User_manual/Reference/Gcodes";
-          command = commandUpper;
-        }
+      if (commandUpper.startsWith('T') && commandUpper.length > 1) {
+        const toolNumber = parseInt(commandUpper.substring(1));
+        if (!isNaN(toolNumber) && (toolNumber < -1 || toolNumber > 49))
+          return null;
       }
-      else if (/^[a-zA-Z]+$/.test(rawMatch)) {
-        doc = functionsData[rawMatch] ?? metaData[rawMatch];
 
-        if (doc) {
-          baseUrl = "https://docs.duet3d.com/User_manual/Reference/Gcode_meta_commands";
-          command = rawMatch;
-        }
-      }
-      else {
-        let lookupKey = rawMatch;
-
-        if (rawMatch === '&')
-          lookupKey = '&&';
-        else if (rawMatch === '|')
-          lookupKey = '||';
-        else if (rawMatch === '=')
-          if (!(/^\s*(?:var|global|set)\b/i.test(line)))
-            lookupKey = '==';
-
-        doc = operatorsData[lookupKey];
-
-        if (doc) {
-          baseUrl = "https://docs.duet3d.com/User_manual/Reference/Gcode_meta_commands";
-          command = "\"" + rawMatch + "\"";
-        }
-      }
+      const docKey = commandUpper.startsWith('T') ? 'T' : commandUpper;
+      doc = gcodeData[docKey];
 
       if (doc) {
-        const markdownContent = [
-          `### ${command}: ${doc.title}`,
-          `##### [View in Duet3D Documentation](${baseUrl}${doc.anchor})`,
-          `---`,
-          `${doc.description}`
-        ].join('\n\n');
-
-        return {
-          contents: {
-            kind: MarkupKind.Markdown,
-            value: markdownContent
-          },
-          range: {
-            start: { line: position.line, character: start },
-            end: { line: position.line, character: end }
-          }
-        };
+        baseUrl = "https://docs.duet3d.com/User_manual/Reference/Gcodes";
+        command = commandUpper;
       }
+    }
+    else if (/^[a-zA-Z]+$/.test(rawMatch)) {
+      doc = functionsData[rawMatch] ?? metaData[rawMatch];
+
+      if (doc) {
+        baseUrl = "https://docs.duet3d.com/User_manual/Reference/Gcode_meta_commands";
+        command = rawMatch;
+      }
+    }
+    else {
+      let lookupKey = rawMatch;
+
+      if (rawMatch === '&')
+        lookupKey = '&&';
+      else if (rawMatch === '|')
+        lookupKey = '||';
+      else if (rawMatch === '=')
+        if (!(/^\s*(?:var|global|set)\b/i.test(line)))
+          lookupKey = '==';
+
+      doc = operatorsData[lookupKey];
+
+      if (doc) {
+        baseUrl = "https://docs.duet3d.com/User_manual/Reference/Gcode_meta_commands";
+        command = "\"" + rawMatch + "\"";
+      }
+    }
+
+    if (doc) {
+      const markdownContent = [
+        `### ${command}: ${doc.title}`,
+        `##### [View in Duet3D Documentation](${baseUrl}${doc.anchor})`,
+        `---`,
+        `${doc.description}`
+      ].join('\n\n');
+
+      return {
+        contents: {
+          kind: MarkupKind.Markdown,
+          value: markdownContent
+        },
+        range: {
+          start: { line: position.line, character: start },
+          end: { line: position.line, character: end }
+        }
+      };
     }
   }
 
