@@ -4,9 +4,8 @@ A lightweight Language Server Protocol (LSP) extension for VS Code that provides
 
 ## Features
 
-Currently, in version 0.1.0, this extension provides intelligent **Hover Documentation**:
-* Hover over any valid G-code or M-code (e.g., `G1`, `M563`) to see its full title and description.
-* Hover over Tool commands (e.g., `T0`, `T-1`) to see tool selection logic.
+Currently, in version 0.2.0, this extension provides intelligent **Hover Documentation**:
+* Hover over any valid G/M/T-code, literal, function, meta command, operator, etc. to see its full title and description.
 * Includes direct links to the official Duet3D documentation for deep dives.
 * Smart validation: ignores invalid tool numbers (e.g., `T50` or `T-2`).
 
