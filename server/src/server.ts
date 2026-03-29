@@ -124,7 +124,7 @@ connection.onHover((params: HoverParams): Hover | null => {
 
         if (doc) {
           baseUrl = "https://docs.duet3d.com/User_manual/Reference/Gcode_meta_commands";
-          command = rawMatch;
+          command = "\"" + rawMatch + "\"";
         }
       }
 
