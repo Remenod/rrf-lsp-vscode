@@ -32,6 +32,15 @@ try {
   connection.console.error(`An Error occurred during loading RRF G-Code Dictionary: ${error}`);
 }
 
+const metaDataPath = path.join(__dirname, '../data/gcode-meta-commands.json');
+let metaData: Record<string, GCodeDoc> = {};
+
+try {
+  metaData = JSON.parse(fs.readFileSync(metaDataPath, 'utf8'));
+} catch (error) {
+  connection.console.error(`An Error occurred during loading RRF Meta Commands Dictionary: ${error}`);
+}
+
 connection.onInitialize((params: InitializeParams) => {
   return {
     capabilities: {
@@ -50,7 +59,7 @@ connection.onHover((params: HoverParams): Hover | null => {
   const lines = text.split(/\r?\n/);
   const line = lines[position.line];
 
-  const wordMatch = /\b(?:[GM]\d+(?:\.\d+)?|T(?:-?\d+)?)\b/gi;
+  const wordMatch = /\b(?:[GM]\d+(?:\.\d+)?|T(?:-?\d+)?|[a-zA-Z]+)\b/gi;
   let match;
 
   while ((match = wordMatch.exec(line)) !== null) {
@@ -58,21 +67,39 @@ connection.onHover((params: HoverParams): Hover | null => {
     const end = start + match[0].length;
 
     if (position.character >= start && position.character <= end) {
-      const command = match[0].toUpperCase();
+      const rawMatch = match[0];
 
-      if (command.startsWith('T') && command.length > 1) {
-        const toolNumber = parseInt(command.substring(1));
-        if (!isNaN(toolNumber) && (toolNumber < -1 || toolNumber > 49))
-          return null;
+      let doc = null;
+      let baseUrl = "";
+      let command = "";
+
+      if (/^(?:[GM]\d+(?:\.\d+)?|T-?\d*)$/i.test(rawMatch)) {
+        const commandUpper = rawMatch.toUpperCase();
+
+        if (commandUpper.startsWith('T') && commandUpper.length > 1) {
+          const toolNumber = parseInt(commandUpper.substring(1));
+          if (!isNaN(toolNumber) && (toolNumber < -1 || toolNumber > 49))
+            return null;
+        }
+
+        const docKey = commandUpper.startsWith('T') ? 'T' : commandUpper;
+        doc = gcodeData[docKey];
+
+        if (doc) {
+          baseUrl = "https://docs.duet3d.com/User_manual/Reference/Gcodes";
+          command = commandUpper;
+        }
+      }
+      else {
+        doc = metaData[rawMatch];
+
+        if (doc) {
+          baseUrl = "https://docs.duet3d.com/User_manual/Reference/Gcode_meta_commands";
+          command = rawMatch;
+        }
       }
 
-      const docKey = command.startsWith('T') ? 'T' : command;
-
-      const doc = gcodeData[docKey];
-
       if (doc) {
-        const baseUrl = "https://docs.duet3d.com/User_manual/Reference/Gcodes";
-
         const markdownContent = [
           `### ${command}: ${doc.title}`,
           `##### [View in Duet3D Documentation](${baseUrl}${doc.anchor})`,
