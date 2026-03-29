@@ -120,7 +120,17 @@ connection.onHover((params: HoverParams): Hover | null => {
         }
       }
       else {
-        doc = operatorsData[rawMatch];
+        let lookupKey = rawMatch;
+
+        if (rawMatch === '&')
+          lookupKey = '&&';
+        else if (rawMatch === '|')
+          lookupKey = '||';
+        else if (rawMatch === '=')
+          if (!(/^\s*(?:var|global|set)\b/i.test(line)))
+            lookupKey = '==';
+
+        doc = operatorsData[lookupKey];
 
         if (doc) {
           baseUrl = "https://docs.duet3d.com/User_manual/Reference/Gcode_meta_commands";
