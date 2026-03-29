@@ -89,7 +89,7 @@ connection.onHover((params: HoverParams): Hover | null => {
 
     const rawMatch = match[0];
 
-    if (line[end] === '.' && (match[0] === 'var' || match[0] === 'global' || match[0] === 'param'))
+    if (line[end] === '.' && (rawMatch === 'var' || rawMatch === 'global' || rawMatch === 'param'))
       continue;
 
     if (rawMatch === '>>>' || rawMatch === '>>')
