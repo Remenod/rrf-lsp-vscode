@@ -1,4 +1,12 @@
 {
+    "_meta": {
+        "title": "RRF G-Code Dictionary",
+        "source_url": "https://docs.duet3d.com/User_manual/Reference/Gcode_meta_commands",
+        "license": "CC BY-SA 4.0",
+        "original_author": "Duet3D",
+        "parsed_and_converted_by": "Remenod",
+        "description": "This file contains parsed documentation for operators. Do not remove this _meta block."
+    },
     "!": {
         "title": "Unary prefix operator",
         "description": "**Signature**: `bool->bool`\n\nBoolean not",
