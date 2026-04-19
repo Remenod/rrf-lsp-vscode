@@ -76,10 +76,6 @@ connection.onInitialize((_params: InitializeParams): InitializeResult => {
         triggerCharacters: ['(', ','],
         retriggerCharacters: [','],
       },
-      diagnosticProvider: {
-        interFileDependencies: false,
-        workspaceDiagnostics: false,
-      },
       semanticTokensProvider: {
         legend: {
           tokenTypes: SEMANTIC_TOKEN_TYPES,
