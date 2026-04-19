@@ -13,22 +13,22 @@ export interface ParseError {
 
 // ── Operator priorities (mirrors ExpressionParser.cpp operators string "?^&|!=<>+-*/") ──
 const BINARY_OPS = new Map<TokenType, number>([
-  [TokenType.Ternary, 1],           // ?
-  [TokenType.Caret, 2],           // ^ (string concat)
-  [TokenType.And, 3],           // & / &&
+  [TokenType.Ternary, 1],      // ?
+  [TokenType.Caret, 2],        // ^ (string concat)
+  [TokenType.And, 3],          // & / &&
   [TokenType.Or, 3],           // | / ||
-  [TokenType.Not, 4],           // ! (parsed as != here)
-  [TokenType.NEq, 4],           // !=
+  [TokenType.Not, 4],          // ! (parsed as != here)
+  [TokenType.NEq, 4],          // !=
   [TokenType.Eq, 4],           // =  / ==
-  [TokenType.EqEq, 4],           // ==
+  [TokenType.EqEq, 4],         // ==
   [TokenType.Lt, 4],           // <
   [TokenType.Gt, 4],           // >
-  [TokenType.LtEq, 4],           // <=
-  [TokenType.GtEq, 4],           // >=
-  [TokenType.Plus, 5],           // +
-  [TokenType.Minus, 5],           // -
-  [TokenType.Star, 6],           // *
-  [TokenType.Slash, 6],           // /
+  [TokenType.LtEq, 4],         // <=
+  [TokenType.GtEq, 4],         // >=
+  [TokenType.Plus, 5],         // +
+  [TokenType.Minus, 5],        // -
+  [TokenType.Star, 6],         // *
+  [TokenType.Slash, 6],        // /
 ]);
 
 // Max args for known functions (undefined = variadic/unknown)
