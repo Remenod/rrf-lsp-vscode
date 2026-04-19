@@ -3,10 +3,12 @@
 import { Hover, MarkupKind } from 'vscode-languageserver/node';
 import { Token, TokenType } from '../parser/types';
 import { SymbolTable } from './symbolTable';
-import { isValidOmPath, getOmPathInfo, isOmIndexAvailable, allOmPaths } from './objectModelIndex';
+import { isValidOmPath, getOmPathInfo, isOmIndexAvailable } from './objectModelIndex';
 
-interface GCodeDoc { title: string; description: string; anchor: string }
+interface GCodeDoc { title: string; description: string; anchor?: string }
 type DocDB = Record<string, GCodeDoc>;
+
+const META_DOCS_URL = 'https://docs.duet3d.com/User_manual/Reference/Gcode_meta_commands';
 
 export function buildHover(
     tokens: Token[],
@@ -23,6 +25,11 @@ export function buildHover(
     const tokIdx = tokens.findIndex(t => t.start <= character && character < t.end);
     if (tokIdx === -1) return null;
     const tok = tokens[tokIdx];
+
+    const formatHoverWithAnchor = (title: string, data: GCodeDoc, baseUrl: string = META_DOCS_URL): Hover => {
+        const anchorLink = data.anchor ? `\n\n[Documentation](${baseUrl}${data.anchor})` : '';
+        return mkHover(`**${title}** — ${data.title}\n\n${data.description}${anchorLink}`);
+    };
 
     switch (tok.type) {
         // ── G / M codes ───────────────────────────────────────────────────────
@@ -50,10 +57,10 @@ export function buildHover(
             }
             const data = functionsData[tok.value.toLowerCase()];
             if (!data) return mkHover(`**${tok.value}()**\n\n*No documentation found.*`);
-            return mkHover(`**${tok.value}** — ${data.title}\n\n${data.description}`);
+            return formatHoverWithAnchor(tok.value, data);
         }
 
-        // ── Meta keywords ─────────────────────────────────────────────────────────
+        // ── Meta keywords & Named constants ───────────────────────────────────
         case TokenType.If:
         case TokenType.Elif:
         case TokenType.Else:
@@ -66,11 +73,19 @@ export function buildHover(
         case TokenType.Set:
         case TokenType.Echo:
         case TokenType.Param:
-        case TokenType.Skip: {
+        case TokenType.Skip:
+        case TokenType.True:
+        case TokenType.False:
+        case TokenType.Null:
+        case TokenType.Pi:
+        case TokenType.Iterations:
+        case TokenType.Line:
+        case TokenType.Result:
+        case TokenType.Input: {
             const key = tok.value.toLowerCase();
             const data = metaData[key];
-            if (!data) return mkHover(`**${tok.value}** — meta command`);
-            return mkHover(`**${tok.value}** — ${data.title}\n\n${data.description}`);
+            if (!data) return mkHover(`**${tok.value}** — meta command / constant`);
+            return formatHoverWithAnchor(tok.value, data);
         }
 
         // ── Identifiers: var.x, global.x, param.x, object model paths ─────────
@@ -113,27 +128,9 @@ export function buildHover(
             }
 
             // Bare identifier — reconstruct the full OM path from token context
-            // (handles  sensors.probes[0].value  where the cursor is on "value")
             const fullPath = reconstructOmPath(tokens, tokIdx);
             return buildOmHover(fullPath);
         }
-
-        // ── Named constants ───────────────────────────────────────────────────
-        case TokenType.True:
-        case TokenType.False:
-            return mkHover(`**${tok.value}** — boolean constant`);
-        case TokenType.Null:
-            return mkHover(`**null** — null / no value`);
-        case TokenType.Pi:
-            return mkHover(`**pi** — π ≈ 3.14159265358979`);
-        case TokenType.Iterations:
-            return mkHover(`**iterations** — number of completed iterations of the innermost \`while\` loop`);
-        case TokenType.Line:
-            return mkHover(`**line** — current line number in the executing file`);
-        case TokenType.Result:
-            return mkHover(`**result** — result of the last M-code or G-code command (0 = success)`);
-        case TokenType.Input:
-            return mkHover(`**input** — the value entered by the user in response to an M291 prompt`);
 
         // ── Operators ─────────────────────────────────────────────────────────
         case TokenType.Plus:
@@ -156,7 +153,7 @@ export function buildHover(
         case TokenType.TripleGt: {
             const data = operatorsData[tok.value];
             if (!data) return null;
-            return mkHover(`**${tok.value}** — ${data.title}\n\n${data.description}`);
+            return formatHoverWithAnchor(tok.value, data);
         }
 
         default:
