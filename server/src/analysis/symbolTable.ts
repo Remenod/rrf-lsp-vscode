@@ -1,8 +1,8 @@
-// analysis/symbolTable.ts
 // Tracks var., global., and param. variable declarations across open documents.
 
 import { Token, TokenType } from '../parser/types';
 import { Lexer } from '../parser/lexer';
+import { lineIndent } from './utils';
 
 export type VarScope = 'var' | 'global' | 'param';
 
@@ -26,8 +26,13 @@ export class SymbolTable {
     // param. declarations (per file): uri → name → decl
     private params = new Map<string, Map<string, VariableDecl>>();
 
+    // All URIs ever indexed (for workspace-wide searches)
+    private allUris = new Set<string>();
+
     // ── Scan a whole document ─────────────────────────────────────────────────
     indexDocument(uri: string, text: string): void {
+        this.allUris.add(uri);
+
         // Clear old entries for this document
         this.locals.set(uri, new Map());
         this.params.set(uri, new Map());
@@ -107,6 +112,7 @@ export class SymbolTable {
 
     // ── Remove document ───────────────────────────────────────────────────────
     removeDocument(uri: string): void {
+        this.allUris.delete(uri);
         this.locals.delete(uri);
         this.params.delete(uri);
         for (const [name, decls] of this.globals) {
@@ -117,6 +123,11 @@ export class SymbolTable {
                 this.globals.set(name, filtered);
             }
         }
+    }
+
+    // ── All indexed URIs (for workspace-wide rename / references) ─────────────
+    getAllIndexedUris(): ReadonlySet<string> {
+        return this.allUris;
     }
 
     // ── Scope-aware var lookup ────────────────────────────────────────────────
@@ -227,12 +238,6 @@ export class SymbolTable {
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-
-function lineIndent(line: string): number {
-    let i = 0;
-    while (i < line.length && (line[i] === ' ' || line[i] === '\t')) i++;
-    return i;
-}
 
 function inferTypeFromTokens(tokens: Token[], startIdx: number): string {
     const t = tokens[startIdx];

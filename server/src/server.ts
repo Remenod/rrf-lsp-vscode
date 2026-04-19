@@ -26,6 +26,12 @@ import {
   DefinitionParams,
   Location,
   Range,
+  RenameParams,
+  PrepareRenameParams,
+  ReferenceParams,
+  ResponseError,
+  WorkspaceEdit,
+  TextEdit,
 } from 'vscode-languageserver/node';
 
 import { TextDocument } from 'vscode-languageserver-textdocument';
@@ -44,6 +50,9 @@ import { SymbolTable } from './analysis/symbolTable';
 import { buildHover } from './analysis/hover';
 import { isValidOmPath, isOmIndexAvailable, allOmPaths } from './analysis/objectModelIndex';
 import { FUNCTION_SIGNATURES, META_COMMAND_DOCS } from './data/signatures';
+import { buildRenameEdit } from './analysis/rename';
+import { buildReferences } from './analysis/references';
+import { lineIndent, findTokenAtChar } from './analysis/utils';
 
 // ── Connection setup ──────────────────────────────────────────────────────────
 const connection = createConnection(ProposedFeatures.all);
@@ -79,6 +88,7 @@ connection.onInitialize((_params: InitializeParams): InitializeResult => {
       textDocumentSync: TextDocumentSyncKind.Incremental,
       hoverProvider: true,
       definitionProvider: true,
+      referencesProvider: true,
       completionProvider: {
         resolveProvider: false,
         triggerCharacters: ['.', ' ', '(', '{'],
@@ -86,6 +96,9 @@ connection.onInitialize((_params: InitializeParams): InitializeResult => {
       signatureHelpProvider: {
         triggerCharacters: ['(', ','],
         retriggerCharacters: [','],
+      },
+      renameProvider: {
+        prepareProvider: true
       },
       semanticTokensProvider: {
         legend: {
@@ -151,6 +164,33 @@ documents.onDidClose((e: TextDocumentChangeEvent<TextDocument>) => {
 function onDocumentChange(doc: TextDocument): void {
   symbolTable.indexDocument(doc.uri, doc.getText());
   publishDiagnostics(doc);
+}
+
+// ── All-docs helper ───────────────────────────────────────────────────────────
+//
+// Builds a uri→text map covering every file the server knows about:
+//   1. Open documents (in-memory, authoritative).
+//   2. Files indexed at startup that are not currently open (read from disk).
+//
+// Used by rename and references so they can search the whole workspace.
+
+function getAllDocTexts(): Map<string, string> {
+  const map = new Map<string, string>();
+
+  // Open documents are most up-to-date.
+  for (const doc of documents.all()) {
+    map.set(doc.uri, doc.getText());
+  }
+
+  // Closed files that were scanned at startup.
+  for (const uri of symbolTable.getAllIndexedUris()) {
+    if (map.has(uri)) continue;
+    try {
+      map.set(uri, fs.readFileSync(URI.parse(uri).fsPath, 'utf8'));
+    } catch { /* file may have been deleted — skip */ }
+  }
+
+  return map;
 }
 
 // ── G-code parameter suppression ─────────────────────────────────────────────
@@ -299,6 +339,64 @@ connection.onHover((params: HoverParams): Hover | null => {
   );
 });
 
+// ── Rename ────────────────────────────────────────────────────────────────────
+connection.onPrepareRename((params: PrepareRenameParams): Range | null => {
+  const doc = documents.get(params.textDocument.uri);
+  if (!doc) return null;
+
+  const lines = doc.getText().split(/\r?\n/);
+  const lineText = lines[params.position.line] ?? '';
+  const tokens = new Lexer(lineText, params.position.line).tokenize();
+
+  const found = findTokenAtChar(tokens, params.position.character);
+  if (!found) throw new ResponseError(0, 'No symbol found.');
+
+  const { tok, idx: tokIdx } = found;
+  if (tok.type !== TokenType.Identifier) {
+    throw new ResponseError(0, 'You can only rename identifiers.');
+  }
+
+  const val = tok.value;
+  const isUsage = val.startsWith('var.') || val.startsWith('global.') || val.startsWith('param.');
+  const prevTok = tokIdx > 0 ? tokens[tokIdx - 1] : null;
+  const isDecl = prevTok && (
+    prevTok.type === TokenType.Var ||
+    prevTok.type === TokenType.Global ||
+    prevTok.type === TokenType.Param
+  );
+
+  if (!isUsage && !isDecl) {
+    throw new ResponseError(0, 'You can only rename var, global, or param variables.');
+  }
+
+  return Range.create(params.position.line, tok.start, params.position.line, tok.end);
+});
+
+connection.onRenameRequest((params: RenameParams): WorkspaceEdit | null => {
+  const doc = documents.get(params.textDocument.uri);
+  if (!doc) return null;
+
+  return buildRenameEdit(
+    params,
+    doc.getText(),
+    params.textDocument.uri,
+    getAllDocTexts(),          // ← globals now searched across all files
+  );
+});
+
+// ── Find All References (Shift+F12) ───────────────────────────────────────────
+connection.onReferences((params: ReferenceParams): Location[] => {
+  const doc = documents.get(params.textDocument.uri);
+  if (!doc) return [];
+
+  return buildReferences(
+    params,
+    doc.getText(),
+    params.textDocument.uri,
+    getAllDocTexts(),          // ← globals searched across all files
+  );
+});
+
 // ── Go to Definition ──────────────────────────────────────────────────────────
 connection.onDefinition((params: DefinitionParams): Location | null => {
   const doc = documents.get(params.textDocument.uri);
@@ -409,6 +507,7 @@ connection.onCompletion((params: CompletionParams): CompletionItem[] => {
       label: name, kind: CompletionItemKind.Keyword, detail: i.title,
       documentation: { kind: MarkupKind.Markdown, value: `**Syntax:** \`${i.syntax}\`\n\n${i.doc}` },
       insertText: metaInsertText(name),
+      insertTextFormat: 2,
     });
   }
   for (const [name, sig] of Object.entries(FUNCTION_SIGNATURES)) {
@@ -637,12 +736,6 @@ function semanticTypeFor(tok: Token): number | null {
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
-function lineIndent(line: string): number {
-  let i = 0;
-  while (i < line.length && (line[i] === ' ' || line[i] === '\t')) i++;
-  return i;
-}
-
 function mkRange(sl: number, sc: number, el: number, ec: number): Range {
   return { start: { line: sl, character: sc }, end: { line: el, character: ec } };
 }
