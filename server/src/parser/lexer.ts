@@ -107,15 +107,25 @@ export class Lexer {
     // ── String literal ─────────────────────────────────────────────────────────
     private scanString(start: number): Token {
         this.pos++; // skip opening "
+        let closed = false;
         while (this.pos < this.src.length) {
             const c = this.src[this.pos++];
             if (c === '"') {
                 if (this.src[this.pos] === '"') {
                     this.pos++; // escaped "" → single "
                 } else {
+                    closed = true;
                     break; // end of string
                 }
             }
+        }
+        if (!closed) {
+            this._errors.push({
+                message: 'unclosed string literal',
+                start,
+                end: this.pos,
+                line: this.lineNum,
+            });
         }
         return this.make(TokenType.StringLit, this.src.slice(start, this.pos), start, this.pos);
     }
