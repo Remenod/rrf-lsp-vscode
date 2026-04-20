@@ -12,8 +12,15 @@ export interface OccurrenceSpan {
     start: number;
     end: number;
     /**
-     * True  → bare name after a scope keyword (`var foo`, `global foo`).
-     * False → qualified usage (`var.foo`, `global.foo`).
+     * True  → bare name in a keyword line:
+     *   • `var foo = …` / `global foo = …`  — actual declarations
+     *   • `param Z = …` / `param Z`         — default-value setter (NOT a true
+     *     declaration; the value comes from the M98 call site)
+     * False → qualified usage: `var.foo`, `global.foo`, `param.Z`
+     *
+     * Used by:
+     *   • rename   — to know which token form to rewrite (bare name vs qualified)
+     *   • references — to honour the LSP `includeDeclaration` flag
      */
     isDeclaration: boolean;
 }
@@ -24,8 +31,9 @@ export interface OccurrenceSpan {
  * Return every occurrence of `scope.baseName` in `docText`.
  *
  * Two token forms are matched:
- *   1. Qualified identifier:  `var.foo` / `global.foo` / `param.foo`
- *   2. Declaration keyword:   `var foo = …` / `global foo = …` / `param foo = …`
+ *   1. Qualified identifier:  `var.foo` / `global.foo` / `param.Z`
+ *   2. Keyword form:          `var foo = …` / `global foo = …` / `param Z [= …]`
+ *      For `param`, this is the default-value setter line, not a true declaration.
  */
 export function findOccurrencesInDoc(
     docText: string,

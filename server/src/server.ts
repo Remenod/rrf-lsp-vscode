@@ -357,16 +357,27 @@ connection.onPrepareRename((params: PrepareRenameParams): Range | null => {
   }
 
   const val = tok.value;
-  const isUsage = val.startsWith('var.') || val.startsWith('global.') || val.startsWith('param.');
+
+  // param variables cannot be renamed — their letter (A–Z) is determined by
+  // the G-code word at the call site (e.g. `M98 P"macro.g" Z10`), not by
+  // anything inside the macro. Renaming param.Z here would not affect callers.
+  if (val.startsWith('param.')) {
+    throw new ResponseError(
+      0,
+      'Macro parameters cannot be renamed — the letter is determined by the G-code word at the call site (e.g. M98 Z10), not inside the macro.',
+    );
+  }
+
+  const isUsage = val.startsWith('var.') || val.startsWith('global.');
   const prevTok = tokIdx > 0 ? tokens[tokIdx - 1] : null;
   const isDecl = prevTok && (
     prevTok.type === TokenType.Var ||
-    prevTok.type === TokenType.Global ||
-    prevTok.type === TokenType.Param
+    prevTok.type === TokenType.Global
+    // TokenType.Param intentionally excluded — see above
   );
 
   if (!isUsage && !isDecl) {
-    throw new ResponseError(0, 'You can only rename var, global, or param variables.');
+    throw new ResponseError(0, 'You can only rename var or global variables.');
   }
 
   return Range.create(params.position.line, tok.start, params.position.line, tok.end);
@@ -417,8 +428,8 @@ connection.onDefinition((params: DefinitionParams): Location | null => {
     decl = symbolTable.lookupVarAtLine(val.slice(4), params.textDocument.uri, params.position.line, indent) ?? undefined;
   else if (val.startsWith('global.'))
     decl = symbolTable.lookupGlobal(val.slice(7)) ?? undefined;
-  else if (val.startsWith('param.'))
-    decl = symbolTable.lookupParam(val.slice(6), params.textDocument.uri) ?? undefined;
+  // param.x: no go-to-definition — the value comes from the G-code word at the
+  // M98 call site in a different file, not from a declaration inside this macro.
 
   if (!decl) return null;
 

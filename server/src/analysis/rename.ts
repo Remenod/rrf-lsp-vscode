@@ -1,8 +1,12 @@
 // analysis/rename.ts
-// Builds a WorkspaceEdit for renaming a var / global / param symbol.
+// Builds a WorkspaceEdit for renaming a var / global symbol.
 //
-// • var / param  → edits in the current file only (these are file-scoped).
-// • global       → edits across ALL known files (globals are workspace-scoped).
+// • var    → edits in the current file only (file-scoped).
+// • global → edits across ALL known files (workspace-scoped).
+//
+// param variables CANNOT be renamed: their names are G-code parameter letters
+// (A–Z) determined by the macro call site (e.g. `M98 P"macro.g" Z10`),
+// not by anything written inside the macro itself.
 
 import { RenameParams, WorkspaceEdit, TextEdit } from 'vscode-languageserver/node';
 import { Lexer } from '../parser/lexer';
@@ -14,7 +18,7 @@ import { findOccurrencesInDoc } from './occurrences';
  * @param currentText  Text of the document that triggered the rename.
  * @param currentUri   URI of that document.
  * @param allDocs      All documents known to the server (uri → text).
- *                     For var/param the map is not used beyond the current file.
+ *                     Only consulted for global renames; ignored for var.
  */
 export function buildRenameEdit(
     params: RenameParams,
@@ -35,13 +39,18 @@ export function buildRenameEdit(
 
     const { scope, baseName } = resolved;
 
+    // param variables are NOT renameable — their letter is set at the call site.
+    // This is also enforced by onPrepareRename in server.ts, but guard here too
+    // so buildRenameEdit is safe to call in isolation.
+    if (scope === 'param') return null;
+
     // Strip any accidental scope prefix the user may have typed in the new-name box.
-    const newBaseName = params.newName.replace(/^(var|global|param)\./, '').trim();
+    const newBaseName = params.newName.replace(/^(var|global)\./, '').trim();
     if (!newBaseName) return null;
 
     // ── 2. Decide which files to search ───────────────────────────────────────
     //  global → workspace-wide (all indexed files)
-    //  var / param → current file only (lexically scoped)
+    //  var    → current file only (lexically scoped)
     const docsToSearch: Map<string, string> =
         scope === 'global'
             ? allDocs

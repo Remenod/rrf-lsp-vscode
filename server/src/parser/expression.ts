@@ -434,6 +434,58 @@ export function validateLine(tokens: Token[], lineText: string, ctx?: Diagnostic
     return errors;
   }
 
+  // ── param <n> [= <expr>] ──────────────────────────────────────────────────
+  //
+  // `param` sets a DEFAULT VALUE for a G-code word parameter that the caller
+  // passes via M98, e.g. `M98 P"macro.g" Z10` → param.Z = 10 inside macro.g.
+  //
+  // Syntax:
+  //   param Z          — Z is required; error if caller omits it
+  //   param Z = 0.5    — Z is optional; defaults to 0.5 if omitted
+  //
+  // Notes:
+  //   • The name is conventionally a single G-code letter (A–Z, case-insensitive)
+  //     but the firmware accepts any valid identifier.
+  //   • No duplicate detection — the same letter may appear in multiple param
+  //     lines in guard patterns like  `if !exists(param.Z)  param Z = 0`.
+  //   • `set param.X = ...` is intentionally disallowed by the `set` validator
+  //     below; macro parameters are read-only after the call.
+  if (first.type === TokenType.Param) {
+    const nameTok = tokens[1];
+    if (!nameTok || nameTok.type === TokenType.EOF) {
+      errors.push({ message: "expected a parameter name after 'param'", ...span(first) });
+      return errors;
+    }
+    if (nameTok.type !== TokenType.Identifier) {
+      errors.push({ message: `expected a parameter name after 'param', got '${nameTok.value}'`, ...span(nameTok) });
+      return errors;
+    }
+    // Optional default: `param Z = <expr>`
+    // `param Z` with no `=` is valid — means "caller must supply Z".
+    let exprStart = 2;
+    if (tokens[exprStart]?.type === TokenType.Eq) {
+      exprStart++;
+      const exprTokens = tokens.slice(exprStart);
+      if (exprTokens.length > 0 && exprTokens[0].type !== TokenType.EOF) {
+        errors.push(...new ExpressionValidator(exprTokens).validate());
+        if (ctx?.isValidOmPath) errors.push(...checkBareIdentifiers(exprTokens, ctx));
+      } else {
+        // `param Z =` with nothing after the `=`
+        errors.push({
+          message: "expected a default value expression after '='",
+          ...span(tokens[exprStart - 1]),
+        });
+      }
+    } else if (tokens[exprStart] && tokens[exprStart].type !== TokenType.EOF && tokens[exprStart].type !== TokenType.Comment) {
+      // Something unexpected after the name, e.g. `param Z 42`
+      errors.push({
+        message: `unexpected token '${tokens[exprStart].value}' — expected '=' or end of line`,
+        ...span(tokens[exprStart]),
+      });
+    }
+    return errors;
+  }
+
   // ── set <var.name | global.name> [<index>] = <expr> ──────────────────────
   if (first.type === TokenType.Set) {
     const targetTok = tokens[1];
@@ -448,6 +500,17 @@ export function validateLine(tokens: Token[], lineText: string, ctx?: Diagnostic
     }
 
     const val = targetTok.value;
+
+    // Explicit error for param.X — parameters are read-only after M98 invocation.
+    if (val.startsWith('param.')) {
+      errors.push({
+        severity: 'error',
+        message: `macro parameters are read-only — 'set param.<n>' is not allowed`,
+        ...span(targetTok),
+      });
+      return errors;
+    }
+
     if (!val.startsWith('var.') && !val.startsWith('global.')) {
       errors.push({ message: `'set' requires 'var.<n>' or 'global.<n>', got '${val}'`, ...span(targetTok) });
       return errors;

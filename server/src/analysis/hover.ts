@@ -118,12 +118,22 @@ export function buildHover(
 
             if (val.startsWith('param.')) {
                 const name = val.slice(6);
-                const decl = symbolTable.lookupParam(name, uri);
-                if (!decl) {
-                    return mkHover(`**${val}**\n\n⚠️ *Macro parameter \`${name}\` not declared in this file.*`);
+                // param variables are NOT declared inside the macro — they are passed by
+                // the caller via G-code word letters, e.g. `M98 P"macro.g" Z10`.
+                // A `param Z = default` line only sets a fallback value; it is not a
+                // declaration in the traditional sense and cannot be renamed.
+                const defaultDecl = symbolTable.lookupParam(name, uri);
+                if (!defaultDecl) {
+                    return mkHover(
+                        `**${val}**\n\nMacro parameter — value passed by the caller via a G-code word.\n\n` +
+                        `*Example:* \`M98 P"${shortUri(uri)}" ${name.toUpperCase()}10\` → \`param.${name.toLowerCase()}\` = 10\n\n` +
+                        `*No default value declared in this file.*`
+                    );
                 }
                 return mkHover(
-                    `**${val}**\n\nScope: \`param\` · Type: \`${decl.inferredType ?? 'unknown'}\` · Declared at line ${decl.line + 1}`
+                    `**${val}**\n\nMacro parameter · Default type: \`${defaultDecl.inferredType ?? 'unknown'}\` · Default set at line ${defaultDecl.line + 1}\n\n` +
+                    `*Value is supplied by the caller, e.g.* \`M98 P"macro.g" ${name.toUpperCase()}10\`\n\n` +
+                    `⚠️ *Macro parameters cannot be renamed — the letter is determined by the G-code word at the call site.*`
                 );
             }
 
