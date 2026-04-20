@@ -1,220 +1,771 @@
+// server.ts — RRF G-code / meta-command LSP server
+
 import {
   createConnection,
   TextDocuments,
   ProposedFeatures,
   InitializeParams,
+  InitializeResult,
   TextDocumentSyncKind,
   HoverParams,
   Hover,
-  MarkupKind
+  MarkupKind,
+  CompletionParams,
+  CompletionItem,
+  CompletionItemKind,
+  SignatureHelpParams,
+  SignatureHelp,
+  SignatureInformation,
+  ParameterInformation,
+  DiagnosticSeverity,
+  Diagnostic,
+  SemanticTokensParams,
+  SemanticTokens,
+  SemanticTokensBuilder,
+  TextDocumentChangeEvent,
+  DefinitionParams,
+  Location,
+  Range,
+  RenameParams,
+  PrepareRenameParams,
+  ReferenceParams,
+  ResponseError,
+  WorkspaceEdit,
+  TextEdit,
 } from 'vscode-languageserver/node';
 
 import { TextDocument } from 'vscode-languageserver-textdocument';
 import * as fs from 'fs';
 import * as path from 'path';
+import { URI } from 'vscode-uri';
 
+import { Lexer } from './parser/lexer';
+import {
+  Token, TokenType,
+  NAMED_CONSTANTS,
+  SEMANTIC_TOKEN_TYPES, SEMANTIC_TOKEN_MODIFIERS,
+} from './parser/types';
+import { validateLine, DiagnosticContext } from './parser/expression';
+import { SymbolTable } from './analysis/symbolTable';
+import { buildHover } from './analysis/hover';
+import { isValidOmPath, isOmIndexAvailable, allOmPaths } from './analysis/objectModelIndex';
+import { FUNCTION_SIGNATURES, META_COMMAND_DOCS } from './data/signatures';
+import { buildRenameEdit } from './analysis/rename';
+import { buildReferences } from './analysis/references';
+import { lineIndent, findTokenAtChar } from './analysis/utils';
+
+// ── Connection setup ──────────────────────────────────────────────────────────
 const connection = createConnection(ProposedFeatures.all);
+const documents = new TextDocuments<TextDocument>(TextDocument);
+const symbolTable = new SymbolTable();
 
-const documents: TextDocuments<TextDocument> = new TextDocuments(TextDocument);
+// ── Load JSON data files ──────────────────────────────────────────────────────
+interface GCodeDoc { title: string; description: string; anchor: string }
+type DocDB = Record<string, GCodeDoc>;
 
-interface GCodeDoc {
-  title: string;
-  description: string;
-  anchor: string;
+function loadJson<T>(relPath: string, label: string): T {
+  const absPath = path.join(__dirname, relPath);
+  try {
+    return JSON.parse(fs.readFileSync(absPath, 'utf8')) as T;
+  } catch (e) {
+    connection.console.error(`Failed to load ${label}: ${e}`);
+    return {} as T;
+  }
 }
 
-const gcodeDataPath = path.join(__dirname, '../data/gcode-commands.json');
-let gcodeData: Record<string, GCodeDoc> = {};
+const gcodeData: DocDB = loadJson('../data/gcode-commands.json', 'G-code dictionary');
+const metaData: DocDB = loadJson('../data/gcode-meta-commands.json', 'meta-commands dictionary');
+const operatorsData: DocDB = loadJson('../data/gcode-operators.json', 'operators dictionary');
+const functionsData: DocDB = loadJson('../data/gcode-functions.json', 'functions dictionary');
 
-try {
-  gcodeData = JSON.parse(fs.readFileSync(gcodeDataPath, 'utf8'));
-} catch (error) {
-  connection.console.error(`An Error occurred during loading RRF G-Code Dictionary: ${error}`);
-}
+const RRF_EXTENSIONS = new Set(['.g', '.G', '.gcode', '.macro', '.cfg']);
 
-const metaDataPath = path.join(__dirname, '../data/gcode-meta-commands.json');
-let metaData: Record<string, GCodeDoc> = {};
-
-try {
-  metaData = JSON.parse(fs.readFileSync(metaDataPath, 'utf8'));
-} catch (error) {
-  connection.console.error(`An Error occurred during loading RRF Meta Commands Dictionary: ${error}`);
-}
-
-const operatorsDataPath = path.join(__dirname, '../data/gcode-operators.json');
-let operatorsData: Record<string, GCodeDoc> = {};
-
-try {
-  operatorsData = JSON.parse(fs.readFileSync(operatorsDataPath, 'utf8'));
-} catch (error) {
-  connection.console.error(`An Error occurred during loading RRF Operators Dictionary: ${error}`);
-}
-
-const functionsDataPath = path.join(__dirname, '../data/gcode-functions.json');
-let functionsData: Record<string, GCodeDoc> = {};
-
-try {
-  functionsData = JSON.parse(fs.readFileSync(functionsDataPath, 'utf8'));
-} catch (error) {
-  connection.console.error(`An Error occurred during loading RRF Functions Dictionary: ${error}`);
-}
-
-connection.onInitialize((params: InitializeParams) => {
+// ── Initialize ────────────────────────────────────────────────────────────────
+connection.onInitialize((_params: InitializeParams): InitializeResult => {
+  connection.console.log('RRF LSP initializing…');
   return {
     capabilities: {
       textDocumentSync: TextDocumentSyncKind.Incremental,
-      hoverProvider: true
-    }
+      hoverProvider: true,
+      definitionProvider: true,
+      referencesProvider: true,
+      completionProvider: {
+        resolveProvider: false,
+        triggerCharacters: ['.', ' ', '(', '{'],
+      },
+      signatureHelpProvider: {
+        triggerCharacters: ['(', ','],
+        retriggerCharacters: [','],
+      },
+      renameProvider: {
+        prepareProvider: true
+      },
+      semanticTokensProvider: {
+        legend: {
+          tokenTypes: SEMANTIC_TOKEN_TYPES,
+          tokenModifiers: SEMANTIC_TOKEN_MODIFIERS,
+        },
+        full: true,
+      },
+    },
   };
 });
 
-connection.onHover((params: HoverParams): Hover | null => {
-  const document = documents.get(params.textDocument.uri);
-  if (!document) return null;
-
-  const position = params.position;
-  const text = document.getText();
-  const lines = text.split(/\r?\n/);
-  const line = lines[position.line];
-
-  const wordMatch = /(?:;.*)|"(?:[^"]|"")*"|'[^']*'|\b(?:0x[0-9a-fA-F]+|0b[01]+|\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)\b|\b(?:[GM]\d+(?:\.\d+)?|T(?:-?\d+)?|[a-zA-Z]+)\b|>>>|>>|==|!=|<=|>=|&&|\|\||\?|[!+\-#*/=<>&|^]/gi;
-  let match;
-
-  while ((match = wordMatch.exec(line)) !== null) {
-    const start = match.index;
-    const end = start + match[0].length;
-    const rawMatch = match[0];
-
-    if (rawMatch.startsWith(';'))
-      break;
-
-    if (position.character < start || position.character > end)
-      continue;
-
-    // ===========Literals==========
-
-    // 1. String Literal
-    if (rawMatch.startsWith('"')) {
-      return {
-        contents: { kind: MarkupKind.Markdown, value: `### String Literal\n---\n**Value:** \`${rawMatch}\`\n\nStrings are limited to 100 characters. Use \`""\` to include a quote inside.` },
-        range: { start: { line: position.line, character: start }, end: { line: position.line, character: end } }
-      };
-    }
-
-    // 2. Character Literal
-    if (rawMatch.startsWith("'")) {
-      return {
-        contents: { kind: MarkupKind.Markdown, value: `### Character Literal\n---\n**Value:** \`${rawMatch}\`\n\n*(Supported in RRF 3.5.0 and later)*` },
-        range: { start: { line: position.line, character: start }, end: { line: position.line, character: end } }
-      };
-    }
-
-    // 3. Number Literals (Int, Float, Hex, Bin)
-    if (/^(?:0x[0-9a-fA-F]+|0b[01]+|\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)$/i.test(rawMatch)) {
-      let type = "Integer";
-      let details = "Decimal format.";
-
-      if (rawMatch.toLowerCase().startsWith('0x')) {
-        type = "Integer (Hexadecimal)";
-        details = "Hexadecimal format.";
-      } else if (rawMatch.toLowerCase().startsWith('0b')) {
-        type = "Integer (Binary)";
-        details = "Binary format.";
-      } else if (rawMatch.includes('.') || rawMatch.toLowerCase().includes('e')) {
-        type = "Float";
-        details = rawMatch.toLowerCase().includes('e') ? "Scientific format." : "Fixed-point simple format.";
-      }
-
-      return {
-        contents: { kind: MarkupKind.Markdown, value: `### ${type} Literal\n---\n**Value:** \`${rawMatch}\`\n\n${details}` },
-        range: { start: { line: position.line, character: start }, end: { line: position.line, character: end } }
-      };
-    }
-    // =============================
-
-    if (line[end] === '.' && (rawMatch === 'var' || rawMatch === 'global' || rawMatch === 'param'))
-      continue;
-
-    if (rawMatch === '>>>' || rawMatch === '>>')
-      continue;
-
-    if (rawMatch === '>') {
-      const textBefore = line.substring(0, start);
-      if (/\becho\s*$/i.test(textBefore))
-        continue;
-    }
-
-    let doc = null;
-    let baseUrl = "";
-    let command = "";
-
-    if (/^(?:[GM]\d+(?:\.\d+)?|T-?\d*)$/i.test(rawMatch)) {
-      const commandUpper = rawMatch.toUpperCase();
-
-      if (commandUpper.startsWith('T') && commandUpper.length > 1) {
-        const toolNumber = parseInt(commandUpper.substring(1));
-        if (!isNaN(toolNumber) && (toolNumber < -1 || toolNumber > 49))
-          return null;
-      }
-
-      const docKey = commandUpper.startsWith('T') ? 'T' : commandUpper;
-      doc = gcodeData[docKey];
-
-      if (doc) {
-        baseUrl = "https://docs.duet3d.com/User_manual/Reference/Gcodes";
-        command = commandUpper;
+connection.onInitialized(async () => {
+  connection.console.log('RRF LSP ready.');
+  try {
+    const folders = await connection.workspace.getWorkspaceFolders();
+    if (folders) {
+      for (const folder of folders) {
+        scanDirectoryForGlobals(URI.parse(folder.uri).fsPath);
       }
     }
-    else if (/^[a-zA-Z]+$/.test(rawMatch)) {
-      doc = functionsData[rawMatch] ?? metaData[rawMatch];
+  } catch (e) {
+    connection.console.warn(`RRF LSP: workspace scan failed: ${e}`);
+  }
+});
 
-      if (doc) {
-        baseUrl = "https://docs.duet3d.com/User_manual/Reference/Gcode_meta_commands";
-        command = rawMatch;
-      }
+function scanDirectoryForGlobals(dir: string): void {
+  let entries: fs.Dirent[];
+  try { entries = fs.readdirSync(dir, { withFileTypes: true }); }
+  catch { return; }
+
+  for (const entry of entries) {
+    if (entry.name.startsWith('.') || entry.name === 'node_modules') continue;
+    const fullPath = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      scanDirectoryForGlobals(fullPath);
+    } else if (RRF_EXTENSIONS.has(path.extname(entry.name))) {
+      const fileUri = URI.file(fullPath).toString();
+      if (documents.get(fileUri)) continue;
+      try {
+        symbolTable.indexDocument(fileUri, fs.readFileSync(fullPath, 'utf8'));
+      } catch { /* skip */ }
     }
-    else {
-      let lookupKey = rawMatch;
+  }
+}
 
-      if (rawMatch === '&')
-        lookupKey = '&&';
-      else if (rawMatch === '|')
-        lookupKey = '||';
-      else if (rawMatch === '=')
-        if (!(/^\s*(?:var|global|set)\b/i.test(line)))
-          lookupKey = '==';
-
-      doc = operatorsData[lookupKey];
-
-      if (doc) {
-        baseUrl = "https://docs.duet3d.com/User_manual/Reference/Gcode_meta_commands";
-        command = "\"" + rawMatch + "\"";
-      }
+// ── Document lifecycle ────────────────────────────────────────────────────────
+documents.onDidOpen(e => onDocumentChange(e.document));
+documents.onDidChangeContent(e => onDocumentChange(e.document));
+documents.onDidClose((e: TextDocumentChangeEvent<TextDocument>) => {
+  const filePath = URI.parse(e.document.uri).fsPath;
+  try {
+    if (fs.existsSync(filePath)) {
+      symbolTable.indexDocument(e.document.uri, fs.readFileSync(filePath, 'utf8'));
+    } else {
+      symbolTable.removeDocument(e.document.uri);
     }
+  } catch {
+    symbolTable.removeDocument(e.document.uri);
+  }
+});
 
-    if (doc) {
-      const markdownContent = [
-        `### ${command}: ${doc.title}`,
-        `##### [View in Duet3D Documentation](${baseUrl}${doc.anchor})`,
-        `---`,
-        `${doc.description}`
-      ].join('\n\n');
+function onDocumentChange(doc: TextDocument): void {
+  symbolTable.indexDocument(doc.uri, doc.getText());
+  publishDiagnostics(doc);
+}
 
-      return {
-        contents: {
-          kind: MarkupKind.Markdown,
-          value: markdownContent
-        },
-        range: {
-          start: { line: position.line, character: start },
-          end: { line: position.line, character: end }
-        }
-      };
+// ── All-docs helper ───────────────────────────────────────────────────────────
+//
+// Builds a uri→text map covering every file the server knows about:
+//   1. Open documents (in-memory, authoritative).
+//   2. Files indexed at startup that are not currently open (read from disk).
+//
+// Used by rename and references so they can search the whole workspace.
+
+function getAllDocTexts(): Map<string, string> {
+  const map = new Map<string, string>();
+
+  // Open documents are most up-to-date.
+  for (const doc of documents.all()) {
+    map.set(doc.uri, doc.getText());
+  }
+
+  // Closed files that were scanned at startup.
+  for (const uri of symbolTable.getAllIndexedUris()) {
+    if (map.has(uri)) continue;
+    try {
+      map.set(uri, fs.readFileSync(URI.parse(uri).fsPath, 'utf8'));
+    } catch { /* file may have been deleted — skip */ }
+  }
+
+  return map;
+}
+
+// ── G-code parameter suppression ─────────────────────────────────────────────
+//
+// In RRF G-code, everything after the first command token is a parameter.
+// However, {expression} blocks embedded in G-code lines are real expressions
+// (e.g. `M42 P3 S{var.i}`). Tokens inside { } should NOT be suppressed for
+// hover purposes.
+//
+// Returns a set of token indices that should be suppressed for hover/semantic.
+// "Suppressed" means they are G-code parameter noise (letters, numbers, etc.)
+// NOT expression tokens inside { } blocks.
+
+interface GCodeParamResult {
+  /** All token indices that are in parameter position */
+  paramIndices: Set<number>;
+  /** Token indices that are INSIDE a { } expression block */
+  exprBraceIndices: Set<number>;
+}
+
+function getGCodeParamInfo(tokens: Token[]): GCodeParamResult {
+  const paramIndices = new Set<number>();
+  const exprBraceIndices = new Set<number>();
+
+  const firstType = tokens[0]?.type;
+  if (firstType !== TokenType.GCode && firstType !== TokenType.TCode) {
+    return { paramIndices, exprBraceIndices };
+  }
+
+  let braceDepth = 0;
+
+  for (let i = 1; i < tokens.length; i++) {
+    const tok = tokens[i];
+    if (tok.type === TokenType.EOF || tok.type === TokenType.Comment) break;
+
+    if (tok.type === TokenType.LBrace) {
+      braceDepth++;
+      paramIndices.add(i);    // the { itself is still a param token
+      exprBraceIndices.add(i);
+    } else if (tok.type === TokenType.RBrace) {
+      braceDepth--;
+      paramIndices.add(i);
+      exprBraceIndices.add(i);
+    } else if (braceDepth > 0) {
+      // Inside { } — mark as expression token (NOT suppressed for hover)
+      exprBraceIndices.add(i);
+      // Still add to paramIndices for semantic token purposes, but hover
+      // will check exprBraceIndices before suppressing
+      paramIndices.add(i);
+    } else {
+      paramIndices.add(i);
     }
   }
 
-  return null;
+  return { paramIndices, exprBraceIndices };
+}
+
+// ── Diagnostics ───────────────────────────────────────────────────────────────
+function publishDiagnostics(doc: TextDocument): void {
+  const text = doc.getText();
+  const lines = text.split(/\r?\n/);
+  const diagnostics: Diagnostic[] = [];
+
+  const omChecker = isOmIndexAvailable() ? isValidOmPath : undefined;
+
+  for (let i = 0; i < lines.length; i++) {
+    const lineText = lines[i];
+    const indent = lineIndent(lineText);
+    const lexer = new Lexer(lineText, i);
+    const tokens = lexer.tokenize();
+
+    for (const e of lexer.errors) {
+      diagnostics.push({
+        severity: DiagnosticSeverity.Error,
+        range: mkRange(e.line, e.start, e.line, e.end),
+        message: e.message,
+        source: 'rrf-gcode',
+      });
+    }
+
+    if (lexer.errors.length > 0) continue;
+
+    const ctx: DiagnosticContext = {
+      symbolTable, uri: doc.uri, line: i, indent,
+      isValidOmPath: omChecker,
+    };
+
+    for (const err of validateLine(tokens, lineText, ctx)) {
+      const sev = err.severity === 'warning' ? DiagnosticSeverity.Warning
+        : err.severity === 'information' ? DiagnosticSeverity.Information
+          : DiagnosticSeverity.Error;
+      diagnostics.push({
+        severity: sev,
+        range: mkRange(err.line, err.start, err.line, err.end),
+        message: err.message,
+        source: 'rrf-gcode',
+      });
+    }
+
+    for (const tok of tokens) {
+      if (tok.type === TokenType.TripleGt) {
+        diagnostics.push({
+          severity: DiagnosticSeverity.Warning,
+          range: mkRange(i, tok.start, i, tok.end),
+          message: '>>> is a deprecated redirect operator. Use echo with > redirection instead.',
+          source: 'rrf-gcode',
+        });
+      }
+    }
+  }
+
+  connection.sendDiagnostics({ uri: doc.uri, diagnostics });
+}
+
+// ── Hover ─────────────────────────────────────────────────────────────────────
+connection.onHover((params: HoverParams): Hover | null => {
+  const doc = documents.get(params.textDocument.uri);
+  if (!doc) return null;
+
+  const lines = doc.getText().split(/\r?\n/);
+  const line = lines[params.position.line] ?? '';
+  const tokens = new Lexer(line, params.position.line).tokenize();
+
+  const { paramIndices, exprBraceIndices } = getGCodeParamInfo(tokens);
+
+  for (let i = 0; i < tokens.length; i++) {
+    const tok = tokens[i];
+    if (tok.start <= params.position.character && params.position.character < tok.end) {
+      if (paramIndices.has(i)) {
+        // Inside a { } expression block — always show hover (these are real expressions)
+        if (exprBraceIndices.has(i)) break;
+        // Pure parameter noise — suppress
+        return null;
+      }
+    }
+  }
+
+  return buildHover(
+    tokens,
+    params.position.character,
+    params.position.line,
+    gcodeData, metaData, operatorsData, functionsData,
+    symbolTable,
+    params.textDocument.uri,
+    lineIndent(line),
+  );
 });
 
+// ── Rename ────────────────────────────────────────────────────────────────────
+connection.onPrepareRename((params: PrepareRenameParams): Range | null => {
+  const doc = documents.get(params.textDocument.uri);
+  if (!doc) return null;
+
+  const lines = doc.getText().split(/\r?\n/);
+  const lineText = lines[params.position.line] ?? '';
+  const tokens = new Lexer(lineText, params.position.line).tokenize();
+
+  const found = findTokenAtChar(tokens, params.position.character);
+  if (!found) throw new ResponseError(0, 'No symbol found.');
+
+  const { tok, idx: tokIdx } = found;
+  if (tok.type !== TokenType.Identifier) {
+    throw new ResponseError(0, 'You can only rename identifiers.');
+  }
+
+  const val = tok.value;
+
+  // param variables cannot be renamed — their letter (A–Z) is determined by
+  // the G-code word at the call site (e.g. `M98 P"macro.g" Z10`), not by
+  // anything inside the macro. Renaming param.Z here would not affect callers.
+  if (val.startsWith('param.')) {
+    throw new ResponseError(
+      0,
+      'Macro parameters cannot be renamed — the letter is determined by the G-code word at the call site (e.g. M98 Z10), not inside the macro.',
+    );
+  }
+
+  const isUsage = val.startsWith('var.') || val.startsWith('global.');
+  const prevTok = tokIdx > 0 ? tokens[tokIdx - 1] : null;
+  const isDecl = prevTok && (
+    prevTok.type === TokenType.Var ||
+    prevTok.type === TokenType.Global
+    // TokenType.Param intentionally excluded — see above
+  );
+
+  if (!isUsage && !isDecl) {
+    throw new ResponseError(0, 'You can only rename var or global variables.');
+  }
+
+  return Range.create(params.position.line, tok.start, params.position.line, tok.end);
+});
+
+connection.onRenameRequest((params: RenameParams): WorkspaceEdit | null => {
+  const doc = documents.get(params.textDocument.uri);
+  if (!doc) return null;
+
+  return buildRenameEdit(
+    params,
+    doc.getText(),
+    params.textDocument.uri,
+    getAllDocTexts(),          // ← globals now searched across all files
+  );
+});
+
+// ── Find All References (Shift+F12) ───────────────────────────────────────────
+connection.onReferences((params: ReferenceParams): Location[] => {
+  const doc = documents.get(params.textDocument.uri);
+  if (!doc) return [];
+
+  return buildReferences(
+    params,
+    doc.getText(),
+    params.textDocument.uri,
+    getAllDocTexts(),          // ← globals searched across all files
+  );
+});
+
+// ── Go to Definition ──────────────────────────────────────────────────────────
+connection.onDefinition((params: DefinitionParams): Location | null => {
+  const doc = documents.get(params.textDocument.uri);
+  if (!doc) return null;
+
+  const lines = doc.getText().split(/\r?\n/);
+  const lineText = lines[params.position.line] ?? '';
+  const tokens = new Lexer(lineText, params.position.line).tokenize();
+  const indent = lineIndent(lineText);
+
+  const tok = tokens.find(t => t.start <= params.position.character && params.position.character < t.end);
+  if (!tok || tok.type !== TokenType.Identifier) return null;
+
+  const val = tok.value;
+  let decl: { uri: string; line: number; col: number } | undefined;
+
+  if (val.startsWith('var.'))
+    decl = symbolTable.lookupVarAtLine(val.slice(4), params.textDocument.uri, params.position.line, indent) ?? undefined;
+  else if (val.startsWith('global.'))
+    decl = symbolTable.lookupGlobal(val.slice(7)) ?? undefined;
+  // param.x: no go-to-definition — the value comes from the G-code word at the
+  // M98 call site in a different file, not from a declaration inside this macro.
+
+  if (!decl) return null;
+
+  return Location.create(
+    decl.uri,
+    Range.create(decl.line, decl.col, decl.line, decl.col + val.length),
+  );
+});
+
+// ── Completions ───────────────────────────────────────────────────────────────
+connection.onCompletion((params: CompletionParams): CompletionItem[] => {
+  const doc = documents.get(params.textDocument.uri);
+  if (!doc) return [];
+
+  const lines = doc.getText().split(/\r?\n/);
+  const line = lines[params.position.line] ?? '';
+  const prefix = line.slice(0, params.position.character);
+
+  // Scoped variable completions — insert only the NAME after the dot
+  if (/\bvar\.$/.test(prefix)) {
+    return symbolTable.getLocalCompletions(params.textDocument.uri).map(v => ({
+      label: v.name,
+      filterText: `var.${v.name}`,
+      insertText: v.name,
+      kind: CompletionItemKind.Variable,
+      detail: `var.${v.name} (${v.inferredType ?? 'unknown'})`,
+    }));
+  }
+
+  // global.<cursor>  →  global variable names
+  if (/\bglobal\.$/.test(prefix)) {
+    return symbolTable.getGlobalCompletions().map(v => ({
+      label: v.name,
+      filterText: `global.${v.name}`,
+      insertText: v.name,
+      kind: CompletionItemKind.Variable,
+      detail: `global.${v.name} (${v.inferredType ?? 'unknown'})`,
+    }));
+  }
+
+  // param.<cursor>  →  parameter names
+  if (/\bparam\.$/.test(prefix)) {
+    return symbolTable.getParamCompletions(params.textDocument.uri).map(v => ({
+      label: v.name,
+      filterText: `param.${v.name}`,
+      insertText: v.name,
+      kind: CompletionItemKind.Variable,
+      detail: `param.${v.name} (${v.inferredType ?? 'unknown'})`,
+    }));
+  }
+
+  // OM completions — triggered after any dotted path
+  const omPrefixMatch = /([a-zA-Z_][a-zA-Z0-9_]*(?:\.[a-zA-Z_][a-zA-Z0-9_]*)*(?:\[\d*\])*)\.$/
+    .exec(prefix);
+  if (omPrefixMatch && isOmIndexAvailable()) {
+    const omPrefix = omPrefixMatch[1].replace(/\[\d+\]/g, '[]');
+    const omPrefixWithDot = omPrefix + '.';
+    const items: CompletionItem[] = [];
+    const seen = new Set<string>();
+
+    for (const info of allOmPaths()) {
+      if (!info.path.startsWith(omPrefixWithDot)) continue;
+      const rest = info.path.slice(omPrefixWithDot.length);
+      const segment = rest.split('.')[0].replace(/\[\]$/, '');
+      if (!segment || seen.has(segment)) continue;
+      seen.add(segment);
+      items.push({
+        label: segment,
+        insertText: segment,
+        kind: info.isArray ? CompletionItemKind.Field : CompletionItemKind.Property,
+        detail: `${omPrefixWithDot}${segment}${info.isArray ? '[]' : ''} (${info.type})`,
+      });
+    }
+    if (items.length > 0) return items;
+  }
+
+  // General completions
+  const items: CompletionItem[] = [];
+
+  for (const code of Object.keys(gcodeData)) {
+    items.push({ label: code, kind: CompletionItemKind.Function, detail: gcodeData[code].title });
+  }
+  for (const [name, info] of Object.entries(META_COMMAND_DOCS)) {
+    const i = info as { title: string; syntax: string; doc: string };
+    items.push({
+      label: name, kind: CompletionItemKind.Keyword, detail: i.title,
+      documentation: { kind: MarkupKind.Markdown, value: `**Syntax:** \`${i.syntax}\`\n\n${i.doc}` },
+      insertText: metaInsertText(name),
+      insertTextFormat: 2,
+    });
+  }
+  for (const [name, sig] of Object.entries(FUNCTION_SIGNATURES)) {
+    const s = sig as { params: { name: string }[]; returnType: string; doc: string };
+    items.push({
+      label: name, kind: CompletionItemKind.Function,
+      detail: `${name}(${s.params.map(p => p.name).join(', ')}) → ${s.returnType}`,
+      documentation: { kind: MarkupKind.Markdown, value: s.doc },
+      insertText: `${name}($0)`,
+      insertTextFormat: 2, // snippet
+    });
+  }
+
+  // Named constants
+  for (const name of NAMED_CONSTANTS) {
+    items.push({ label: name, kind: CompletionItemKind.Constant });
+  }
+
+  // All in-scope variables
+  for (const v of symbolTable.getAllCompletions(params.textDocument.uri)) {
+    items.push({
+      label: `${v.scope}.${v.name}`,
+      kind: CompletionItemKind.Variable,
+      detail: `${v.scope}.${v.name} (${v.inferredType ?? 'unknown'})`,
+    });
+  }
+  if (isOmIndexAvailable()) {
+    const seen = new Set<string>();
+    for (const info of allOmPaths()) {
+      const top = info.path.split('.')[0];
+      if (seen.has(top)) continue;
+      seen.add(top);
+      items.push({ label: top, kind: CompletionItemKind.Module, detail: `Object Model: ${top}` });
+    }
+  }
+
+  return items;
+});
+
+// ── Signature Help ─────────────────────────────────────────────────────────────
+connection.onSignatureHelp((params: SignatureHelpParams): SignatureHelp | null => {
+  const doc = documents.get(params.textDocument.uri);
+  if (!doc) return null;
+
+  const lines = doc.getText().split(/\r?\n/);
+  const lineText = lines[params.position.line] ?? '';
+  const upToCursor = lineText.slice(0, params.position.character);
+
+  // Walk backwards to find the innermost open function call
+  let depth = 0;
+  let funcStart = -1;
+  for (let i = upToCursor.length - 1; i >= 0; i--) {
+    const c = upToCursor[i];
+    if (c === ')') { depth++; continue; }
+    if (c === '(') {
+      if (depth > 0) { depth--; continue; }
+      funcStart = i;
+      break;
+    }
+  }
+
+  if (funcStart < 0) return null;
+
+  const nameMatch = /([a-zA-Z_][a-zA-Z0-9_]*)$/.exec(upToCursor.slice(0, funcStart).trimEnd());
+  if (!nameMatch) return null;
+  const funcName = nameMatch[1].toLowerCase();
+  const sig = FUNCTION_SIGNATURES[funcName] as {
+    name: string; params: { name: string; type?: string; doc: string }[];
+    returnType: string; doc: string;
+  } | undefined;
+  if (!sig) return null;
+
+  const inside = upToCursor.slice(funcStart + 1);
+  let activeParam = 0, d = 0;
+  for (const c of inside) {
+    if (c === '(' || c === '[' || c === '{') { d++; continue; }
+    if (c === ')' || c === ']' || c === '}') { d--; continue; }
+    if (c === ',' && d === 0) activeParam++;
+  }
+  activeParam = Math.min(activeParam, sig.params.length - 1);
+
+  return {
+    signatures: [{
+      label: `${sig.name}(${sig.params.map(p => p.name).join(', ')})`,
+      documentation: { kind: MarkupKind.Markdown, value: sig.doc },
+      parameters: sig.params.map(p => ({
+        label: p.name,
+        documentation: { kind: MarkupKind.Markdown, value: `*${p.type ?? 'any'}* — ${p.doc}` },
+      })) as ParameterInformation[],
+    } as SignatureInformation],
+    activeSignature: 0,
+    activeParameter: activeParam,
+  };
+});
+
+// ── Semantic Tokens ────────────────────────────────────────────────────────────
+// Token type indices (must match SEMANTIC_TOKEN_TYPES order)
+const ST = {
+  keyword: 0,
+  function: 1,
+  variable: 2,
+  number: 3,
+  string: 4,
+  operator: 5,
+  parameter: 6,
+  macro: 7,
+  comment: 8,
+};
+
+connection.languages.semanticTokens.on((params: SemanticTokensParams): SemanticTokens => {
+  const doc = documents.get(params.textDocument.uri);
+  if (!doc) return { data: [] };
+
+  const builder = new SemanticTokensBuilder();
+  const lines = doc.getText().split(/\r?\n/);
+
+  for (let i = 0; i < lines.length; i++) {
+    const tokens = new Lexer(lines[i], i).tokenize();
+    const { paramIndices, exprBraceIndices } = getGCodeParamInfo(tokens);
+
+    for (let j = 0; j < tokens.length; j++) {
+      const tok = tokens[j];
+
+      if (paramIndices.has(j) && !exprBraceIndices.has(j)) {
+        // Pure param noise — only highlight single-letter identifiers and codes
+        if (tok.type === TokenType.Identifier && tok.value.length === 1)
+          builder.push(i, tok.start, tok.end - tok.start, ST.parameter, 0);
+        if (tok.type === TokenType.TCode || tok.type === TokenType.GCode)
+          builder.push(i, tok.start, tok.end - tok.start, ST.parameter, 0);
+        continue;
+      }
+
+      const st = semanticTypeFor(tok);
+      if (st !== null) builder.push(i, tok.start, tok.end - tok.start, st, 0);
+    }
+  }
+
+  return builder.build();
+});
+
+function semanticTypeFor(tok: Token): number | null {
+  switch (tok.type) {
+    // Meta keywords
+    case TokenType.If:
+    case TokenType.Elif:
+    case TokenType.Else:
+    case TokenType.While:
+    case TokenType.Break:
+    case TokenType.Continue:
+    case TokenType.Abort:
+    case TokenType.Var:
+    case TokenType.Global:
+    case TokenType.Set:
+    case TokenType.Echo:
+    case TokenType.Param:
+    case TokenType.Skip:
+      return ST.keyword;
+
+    // Functions
+    case TokenType.FunctionName:
+      return ST.function;
+
+    // Variables
+    case TokenType.Identifier: {
+      const v = tok.value;
+      if (v.startsWith('var.') || v.startsWith('global.') || v.startsWith('param.'))
+        return ST.variable;
+      return null;
+    }
+
+    // Named constants / parameters
+    case TokenType.True:
+    case TokenType.False:
+    case TokenType.Null:
+    case TokenType.Pi:
+    case TokenType.Iterations:
+    case TokenType.Line:
+    case TokenType.Result:
+    case TokenType.Input:
+      return ST.parameter;
+
+    // Numbers
+    case TokenType.Integer:
+    case TokenType.HexInteger:
+    case TokenType.BinInteger:
+    case TokenType.Float:
+      return ST.number;
+
+    // Strings
+    case TokenType.StringLit:
+    case TokenType.CharLit:
+      return ST.string;
+
+    // Operators
+    case TokenType.Plus:
+    case TokenType.Minus:
+    case TokenType.Star:
+    case TokenType.Slash:
+    case TokenType.Caret:
+    case TokenType.Eq:
+    case TokenType.EqEq:
+    case TokenType.NEq:
+    case TokenType.Lt:
+    case TokenType.Gt:
+    case TokenType.LtEq:
+    case TokenType.GtEq:
+    case TokenType.And:
+    case TokenType.Or:
+    case TokenType.Not:
+    case TokenType.Ternary:
+    case TokenType.Hash:
+      return ST.operator;
+
+    // G/M/T codes
+    case TokenType.GCode:
+    case TokenType.TCode:
+      return ST.macro;
+
+    // Comments
+    case TokenType.Comment:
+      return ST.comment;
+
+    default:
+      return null;
+  }
+}
+
+// ── Helpers ────────────────────────────────────────────────────────────────────
+function mkRange(sl: number, sc: number, el: number, ec: number): Range {
+  return { start: { line: sl, character: sc }, end: { line: el, character: ec } };
+}
+
+function metaInsertText(name: string): string {
+  switch (name) {
+    case 'if': return 'if {$1}';
+    case 'elif': return 'elif {$1}';
+    case 'while': return 'while {$1}';
+    case 'var': return 'var $1 = $2';
+    case 'global': return 'global $1 = $2';
+    case 'set': return 'set $1 = $2';
+    case 'echo': return 'echo $1';
+    case 'abort': return 'abort "$1"';
+    case 'param': return 'param $1 = $2';
+    default: return name;
+  }
+}
+
+// ── Start ─────────────────────────────────────────────────────────────────────
 documents.listen(connection);
 connection.listen();
