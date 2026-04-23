@@ -39,12 +39,16 @@ export function buildHover(
             const anchor = data.anchor
                 ? `\n\n[Documentation](https://docs.duet3d.com/en/User_manual/Reference/Gcodes#${data.anchor})`
                 : '';
-            return mkHover(`**${tok.value}** — ${data.title}\n\n${data.description}${anchor}`);
+            return mkHover(`### **${tok.value}** — ${data.title}\n\n${data.description}${anchor}`);
         }
 
         case TokenType.TCode: {
-            const n = tok.value.slice(1);
-            return mkHover(`**${tok.value}** — Select tool${n ? ` ${n}` : ''}`);
+            const data = gcodeData["T"];
+            if (!data) return mkHover(`**${tok.value}**\n\n*No documentation found.*`);
+            const anchor = data.anchor
+                ? `\n\n[Documentation](https://docs.duet3d.com/en/User_manual/Reference/Gcodes#${data.anchor})`
+                : '';
+            return mkHover(`### **T** — ${data.title}\n\n${data.description}${anchor}`);
         }
 
         case TokenType.FunctionName: {
