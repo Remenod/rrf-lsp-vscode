@@ -38,7 +38,7 @@ def to_markdown(node):
     # Headings
     if node.name in ['h3', 'h4', 'h5', 'h6']:
         level = int(node.name[1])
-        prefix = '#' * level
+        prefix = '#' * min(level + 1, 6)
         text = get_inner_markdown(node).strip()
         return f"\n{prefix} {text}\n\n"
     
@@ -97,7 +97,7 @@ def generate_lsp_database(output_path, url):
     lsp_database = {}
 
     lsp_database["_meta"] = {
-            "title": "Duet3D G-Code Dictionary for LSP",
+            "title": "RRF G-Code Dictionary",
             "source_url": url,
             "license": "CC BY-SA 4.0",
             "original_author": "Duet3D",
@@ -108,6 +108,8 @@ def generate_lsp_database(output_path, url):
     command_pattern = re.compile(r'^([GMT](?:\d+(?:\.\d+)?)?):\s*(.*)')
 
     print("Compiling the database...")
+    
+    parsed_commands = {}
     
     for heading in soup.find_all(['h2', 'h3']):
         element_id = heading.get('id')
@@ -145,11 +147,37 @@ def generate_lsp_database(output_path, url):
         raw_description = ''.join(description_parts)
         description = re.sub(r'\n{3,}', '\n\n', raw_description).strip()
 
-        lsp_database[code] = {
+        if code not in parsed_commands:
+            parsed_commands[code] = []
+            
+        parsed_commands[code].append({
             "title": title,
             "description": description,
             "anchor": anchor
-        }
+        })
+
+    print("Processing multiple function commands...")
+    
+    for code, items in parsed_commands.items():
+        if len(items) == 1:
+            lsp_database[code] = items[0]
+        else:
+            titles = [item['title'] for item in items]
+            
+            unique_titles = list(dict.fromkeys(titles))
+            combined_title = f"Multi-command: {' / '.join(unique_titles)}"
+            
+            combined_desc_parts = []
+            for item in items:
+                combined_desc_parts.append(f"### **{item['title']}**\n\n{item['description']}")
+            
+            combined_description = "\n\n---\n\n---\n\n---\n\n---\n\n---\n\n---\n\n---\n\n---\n\n---\n\n---\n\n---\n\n---\n\n".join(combined_desc_parts)
+            
+            lsp_database[code] = {
+                "title": combined_title,
+                "description": combined_description,
+                "anchor": items[0]['anchor']
+            }
 
     with open(output_path, 'w', encoding='utf-8') as f:
         json.dump(lsp_database, f, ensure_ascii=False, indent=2)
