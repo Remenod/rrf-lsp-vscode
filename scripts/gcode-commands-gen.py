@@ -176,7 +176,7 @@ def generate_lsp_database(output_path, url):
             lsp_database[code] = {
                 "title": combined_title,
                 "description": combined_description,
-                "anchor": items[0]['anchor'] # Використовуємо якір першої знайденої команди
+                "anchor": items[0]['anchor']
             }
 
     with open(output_path, 'w', encoding='utf-8') as f:
