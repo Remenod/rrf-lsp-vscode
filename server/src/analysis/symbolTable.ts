@@ -93,20 +93,6 @@ export class SymbolTable {
                 this.globals.set(nameTok.value, existing);
             }
 
-            // param <name> = ...
-            else if (first.type === TokenType.Param && tokens[1]?.type === TokenType.Identifier) {
-                const nameTok = tokens[1];
-                const decl: VariableDecl = {
-                    name: nameTok.value,
-                    scope: 'param',
-                    uri,
-                    line: i,
-                    col: nameTok.start,
-                    indent,
-                    inferredType: inferTypeFromTokens(tokens, 3),
-                };
-                paramMap.set(nameTok.value, decl);
-            }
         }
     }
 

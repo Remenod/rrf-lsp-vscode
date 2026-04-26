@@ -599,6 +599,7 @@ export function validateLine(
     const exprTokens = tokens.slice(exprStart);
     if (exprTokens.length > 0 && exprTokens[0].type !== TokenType.EOF) {
       errors.push(...new ExpressionValidator(exprTokens).validateCommaList());
+      if (ctx) errors.push(...checkDeclaredVars(exprTokens, ctx));
       if (ctx?.isValidOmPath) errors.push(...checkBareIdentifiers(exprTokens, ctx));
     }
     return errors;
@@ -648,6 +649,7 @@ export function validateLine(
       exprTokens[0].type !== TokenType.Comment
     ) {
       errors.push(...new ExpressionValidator(exprTokens).validateFull());
+      if (ctx) errors.push(...checkDeclaredVars(exprTokens, ctx));
       if (ctx?.isValidOmPath) errors.push(...checkBareIdentifiers(exprTokens, ctx));
     }
     return errors;
@@ -706,6 +708,7 @@ export function validateLine(
 
     errors.push(...new ExpressionValidator(exprTokens).validateFull());
     if (ctx?.isValidOmPath) errors.push(...checkBareIdentifiers(exprTokens, ctx));
+    if (ctx) errors.push(...checkDeclaredVars(exprTokens, ctx));
     return errors;
   }
 
@@ -749,72 +752,24 @@ export function validateLine(
     }
 
     errors.push(...new ExpressionValidator(exprTokens).validateFull());
+    if (ctx) errors.push(...checkDeclaredVars(exprTokens, ctx));
     if (ctx?.isValidOmPath) errors.push(...checkBareIdentifiers(exprTokens, ctx));
     return errors;
   }
 
-  // ── param <LETTER> [= <expr>] ──────────────────────────────────────────────
+  // ── param — declaration syntax is FORBIDDEN ────────────────────────────────
   //
-  // G-code parameter names are a SINGLE UPPERCASE LETTER (A–Z).
-  // These correspond to G-code word letters at the M98 call site.
-  // Examples:
-  //   param Z          — caller must supply Z; error if omitted
-  //   param Z = 0.5    — Z optional; defaults to 0.5
-  //
-  // `param a = 10` is an error — lowercase, should be 'A'.
-  // `param abc = 0`  is an error — multi-character name.
+  // Macro parameters are passed entirely by the caller via G-code word letters,
+  // e.g.  `M98 P"macro.g" Z10`.  Inside a macro they are read as `param.Z`.
+  // There is NO declaration syntax for param — `param Z = 0` is invalid.
   if (first.type === TokenType.Param) {
-    const nameTok = tokens[1];
-    if (!nameTok || nameTok.type === TokenType.EOF) {
-      errors.push({ message: "expected a parameter name after 'param'", ...span(first) });
-      return errors;
-    }
-    if (nameTok.type !== TokenType.Identifier) {
-      errors.push({
-        message: `expected a parameter name after 'param', got '${nameTok.value}'`,
-        ...span(nameTok),
-      });
-      return errors;
-    }
-
-    // Validate: must be exactly one uppercase letter A–Z
-    if (!/^[A-Z]$/.test(nameTok.value)) {
-      const hint = nameTok.value.length === 1
-        ? `did you mean 'param ${nameTok.value.toUpperCase()}'?`
-        : `G-code parameter names must be a single uppercase letter (A–Z), e.g. 'param Z = 0'`;
-      errors.push({
-        message: `invalid param name '${nameTok.value}' — ${hint}`,
-        ...span(nameTok),
-      });
-      return errors;
-    }
-
-    // Optional default value
-    let exprStart = 2;
-    if (tokens[exprStart]?.type === TokenType.Eq) {
-      exprStart++;
-      const exprTokens = tokens.slice(exprStart);
-      if (exprTokens.length > 0 && exprTokens[0].type !== TokenType.EOF) {
-        errors.push(...new ExpressionValidator(exprTokens).validateFull());
-        if (ctx?.isValidOmPath) errors.push(...checkBareIdentifiers(exprTokens, ctx));
-      } else {
-        // `param Z =` with nothing after '='
-        errors.push({
-          message: "expected a default value expression after '='",
-          ...span(tokens[exprStart - 1]),
-        });
-      }
-    } else if (
-      tokens[exprStart] &&
-      tokens[exprStart].type !== TokenType.EOF &&
-      tokens[exprStart].type !== TokenType.Comment
-    ) {
-      // Something unexpected after the name: `param Z 42`
-      errors.push({
-        message: `unexpected '${tokens[exprStart].value}' — expected '=' or end of line`,
-        ...span(tokens[exprStart]),
-      });
-    }
+    errors.push({
+      severity: 'error',
+      message:
+        `'param' cannot be used as a declaration — macro parameters are supplied ` +
+        `by the caller (e.g. M98 P"macro.g" A10) and accessed inside the macro as 'param.A'`,
+      ...span(first),
+    });
     return errors;
   }
 
@@ -924,6 +879,7 @@ export function validateLine(
     }
 
     errors.push(...new ExpressionValidator(exprTokens).validateFull());
+    if (ctx) errors.push(...checkDeclaredVars(exprTokens, ctx));
     if (ctx?.isValidOmPath) errors.push(...checkBareIdentifiers(exprTokens, ctx));
     return errors;
   }
@@ -979,6 +935,42 @@ function checkBareIdentifiers(tokens: Token[], ctx: DiagnosticContext): ParseErr
         message: `'${v}' is not a known Object Model path — did you mean 'var.${v}'?`,
         ...span(t),
       });
+    }
+  }
+  return errors;
+}
+
+// ── Declared-variable checker ─────────────────────────────────────────────────
+//
+// Validates that every var.X token in an expression was actually declared in
+// scope (error) and that global.X was declared in some known file (warning).
+// param.X tokens are intentionally skipped — they come from the caller.
+function checkDeclaredVars(tokens: Token[], ctx: DiagnosticContext): ParseError[] {
+  const errors: ParseError[] = [];
+  for (const t of tokens) {
+    if (t.type !== TokenType.Identifier) continue;
+    const v = t.value;
+
+    if (v.startsWith('var.')) {
+      const name = v.slice(4).split('[')[0];
+      if (!ctx.symbolTable.lookupVarAtLine(name, ctx.uri, ctx.line, ctx.indent)) {
+        errors.push({
+          severity: 'error',
+          message: `undefined variable '${v}' — declare it with 'var ${name} = ...' first`,
+          ...span(t),
+        });
+      }
+    } else if (v.startsWith('global.')) {
+      const name = v.slice(7).split('[')[0];
+      if (!ctx.symbolTable.lookupGlobal(name)) {
+        errors.push({
+          severity: 'warning',
+          message:
+            `'${v}' not found in any open file — ` +
+            `it may be declared in another macro or created at runtime`,
+          ...span(t),
+        });
+      }
     }
   }
   return errors;

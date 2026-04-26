@@ -61,8 +61,7 @@ export function findOccurrencesInDoc(
                     prev &&
                     prev.value.toLowerCase() === scope &&
                     (prev.type === TokenType.Var ||
-                        prev.type === TokenType.Global ||
-                        prev.type === TokenType.Param)
+                        prev.type === TokenType.Global)
                 ) {
                     results.push({ line: lineIdx, start: t.start, end: t.end, isDeclaration: true });
                 }
