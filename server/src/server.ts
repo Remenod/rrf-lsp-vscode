@@ -621,6 +621,20 @@ connection.onCompletion((params: CompletionParams): CompletionItem[] => {
       insertTextFormat: 2,
     });
   }
+
+  // Ensure var and global always have declaration snippets even if META_COMMAND_DOCS
+  // is missing them (bug 3: global snippet was absent in some configurations).
+  for (const kw of ['var', 'global'] as const) {
+    if (!items.some(it => it.label === kw)) {
+      items.push({
+        label: kw,
+        kind: CompletionItemKind.Keyword,
+        detail: kw === 'var' ? 'Declare a local variable' : 'Declare a global variable',
+        insertText: metaInsertText(kw),
+        insertTextFormat: 2,
+      });
+    }
+  }
   for (const [name, sig] of Object.entries(FUNCTION_SIGNATURES)) {
     const s = sig as { params: { name: string }[]; returnType: string; doc: string };
     items.push({
@@ -861,7 +875,6 @@ function metaInsertText(name: string): string {
     case 'set': return 'set $1 = $2';
     case 'echo': return 'echo $1';
     case 'abort': return 'abort "$1"';
-    case 'param': return 'param $1 = $2';
     default: return name;
   }
 }
