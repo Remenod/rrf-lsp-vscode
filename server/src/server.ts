@@ -867,9 +867,9 @@ function mkRange(sl: number, sc: number, el: number, ec: number): Range {
 
 function metaInsertText(name: string): string {
   switch (name) {
-    case 'if': return 'if {$1}';
-    case 'elif': return 'elif {$1}';
-    case 'while': return 'while {$1}';
+    case 'if': return 'if $1';
+    case 'elif': return 'elif $1';
+    case 'while': return 'while $1';
     case 'var': return 'var $1 = $2';
     case 'global': return 'global $1 = $2';
     case 'set': return 'set $1 = $2';
