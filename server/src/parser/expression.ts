@@ -633,6 +633,7 @@ export function validateLine(
       return errors;
     }
     errors.push(...new ExpressionValidator(exprTokens).validateFull());
+    if (ctx) errors.push(...checkDeclaredVars(exprTokens, ctx));
     if (ctx?.isValidOmPath) errors.push(...checkBareIdentifiers(exprTokens, ctx));
     return errors;
   }
