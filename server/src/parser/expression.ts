@@ -589,6 +589,7 @@ export function validateLine(
         exprStart++;
       } else if (filenameTok?.type === TokenType.LBrace) {
         let depth = 1;
+        const braceStart = exprStart;
         exprStart++;
         while (exprStart < tokens.length && depth > 0) {
           const tt = tokens[exprStart].type;
@@ -596,6 +597,13 @@ export function validateLine(
           if (tt === TokenType.LBrace) depth++;
           if (tt === TokenType.RBrace) depth--;
           exprStart++;
+        }
+
+        const redirectTokens = tokens.slice(braceStart + 1, exprStart - 1);
+        if (redirectTokens.length > 0 && redirectTokens[0].type !== TokenType.EOF) {
+          errors.push(...new ExpressionValidator(redirectTokens).validateFull());
+          if (ctx) errors.push(...checkDeclaredVars(redirectTokens, ctx));
+          if (ctx?.isValidOmPath) errors.push(...checkBareIdentifiers(redirectTokens, ctx));
         }
       } else if (filenameTok && filenameTok.type !== TokenType.EOF) {
         errors.push({
