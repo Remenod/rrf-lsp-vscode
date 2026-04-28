@@ -28,7 +28,7 @@ export function buildHover(
 
     const formatHoverWithAnchor = (title: string, data: GCodeDoc, baseUrl: string = META_DOCS_URL): Hover => {
         const anchorLink = data.anchor ? `\n\n[Documentation](${baseUrl}${data.anchor})` : '';
-        return mkHover(`### **${title == "*" ? "\\*" : title}** — ${data.title}\n\n${data.description}${anchorLink}`);
+        return mkHover(`### **${title == "*" ? "\\*" : title}** — ${data.title}\n\n${anchorLink}\n\n${data.description}`);
     };
 
     switch (tok.type) {
@@ -39,7 +39,7 @@ export function buildHover(
             const anchor = data.anchor
                 ? `\n\n[Documentation](https://docs.duet3d.com/en/User_manual/Reference/Gcodes#${data.anchor})`
                 : '';
-            return mkHover(`### **${tok.value}** — ${data.title}\n\n${data.description}${anchor}`);
+            return mkHover(`### **${tok.value}** — ${data.title}\n\n${anchor}\n\n${data.description}`);
         }
 
         case TokenType.TCode: {
@@ -48,7 +48,7 @@ export function buildHover(
             const anchor = data.anchor
                 ? `\n\n[Documentation](https://docs.duet3d.com/en/User_manual/Reference/Gcodes#${data.anchor})`
                 : '';
-            return mkHover(`### **T** — ${data.title}\n\n${data.description}${anchor}`);
+            return mkHover(`### **T** — ${data.title}\n\n${anchor}\n\n${data.description}`);
         }
 
         case TokenType.FunctionName: {
