@@ -243,7 +243,6 @@ hazard rules that may follow later. **PHASE 2** — needs data the server does n
   expression"`, ranged on `var.a`); `i` must be a non-negative `int` (`"expected non-negative integer"`).
 - `TC-ARR-07` **MUST** — a bracketed expression may be indexed (`{1,2}[0]`, `(var.a)[0]`); the
   index must be a non-negative `int`; a non-array base → `"left operand of [ ] is not an array"`.
-  *Blocked*: the syntax layer currently reports `unexpected '['` on these valid forms.
 - `TC-ARR-08` **MUST** — nested indexing follows element types; indexing past the nesting depth is
   an error.
 - `TC-ARR-09` **MUST** — object-model arrays: index must be `int`; an element with object-model
@@ -313,7 +312,7 @@ reads as `null`, and some checks run unconditionally.
   `"unknown function"` and says in which version it was added.
 - `TC-VER-02` **MUST** — the constant `input` needs 3.5.0.
 - `TC-VER-03` **MUST** — indexing a bracketed string (`("abc")[0]`) is an error before
-  3.6.0-beta.4 and a `char` from then on. *Blocked by the same syntax bug as `TC-ARR-07`.*
+  3.6.0-beta.4 and a `char` from then on.
 - `TC-VER-04` **MUST** — with no version, every function the server knows is accepted and typed by
   the newest table, and version-dependent outcomes are not reported.
 - `TC-VER-05` **MUST** — a version newer than the newest known table (e.g. `3.7`) uses the newest
@@ -426,17 +425,13 @@ Possible follow-ups after phase 1 (not decided):
   object-model tables. The library types every number as `number` and gives no type at all to
   145 fields whose default is `null` (for example `move.axes[].machinePosition`).
 * D-8: confirm `TC-SC-03` on a printer (`var x = 5` / `if false && -var.x < 0` / `echo "survived"`
-  should stop with `expected numeric operand`); drop the rule if `survived` is printed.
+  should stop with `expected numeric value after '-'`); drop the rule if `survived` is printed.
 
-## Known blockers in other layers
+## Notes on other layers
 
-* The syntax layer reports `unexpected '['` on `{1,2}[0]` and `(x)[0]`, which the firmware accepts.
-  `TC-ARR-07` and `TC-VER-03` cannot pass until that is fixed (`TC-DIAG-06` suppresses the line).
-* The syntax layer reports `unexpected 'abs'` on `#abs(-5)` / `#vector(3, 0)`, which the firmware
-  accepts (the `#` is ignored). The function-call half of `TC-UN-05`/`TC-UN-06` is blocked by it.
-* The syntax layer accepts `abs(1)[0]` and `fileread(…)[0]`. The firmware cannot index a function
-  result: `echo`/`if` fail with `expected ','` / extra characters, and `var`/`set` **silently drop
-  the index** and store the whole array.
+* The syntax layer accepts `{1,2}[0]`, `(x)[0]` and `#abs(-5)`, as the firmware does, and rejects
+  `abs(1)[0]` / `fileread(…)[0]`: the firmware cannot index a function result (`echo`/`if` fail
+  with `expected ','`, and `var`/`set` **silently drop the index** and store the whole value).
 * The object-model index is built from `@duet3d/objectmodel` 3.6.x, not 3.5.4. Tests use paths
   that exist in both (`move.axes[0]`, `state.status`, `heat.heaters[0].current`).
 

@@ -86,7 +86,7 @@ describe('TC-ARR-06: indexed assignment', () => {
   });
 });
 
-describe('TC-ARR-07: indexing a bracketed expression (blocked by the syntax layer)', () => {
+describe('TC-ARR-07: indexing a bracketed expression', () => {
   rule('TC-ARR-07', 'literal arrays and parenthesised arrays can be indexed', () => {
     expectType(typeOfExpr('{10, 20}[1]'), 'int', '{…}[i]');
     expectType(typeOfExpr('(var.a)[0]', { prelude: [A] }), 'int', '(var)[i]');

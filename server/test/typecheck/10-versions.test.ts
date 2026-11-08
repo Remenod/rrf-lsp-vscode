@@ -56,7 +56,7 @@ describe('TC-VER-02: named constants', () => {
   });
 });
 
-describe('TC-VER-03: string indexing on bracketed expressions (blocked by the syntax layer)', () => {
+describe('TC-VER-03: string indexing on bracketed expressions', () => {
   rule('TC-VER-03', 'an error before 3.6.0-beta.4, a char from then on', () => {
     expectTypes('echo ("abc")[0]', [{ code: CODE.index, at: '("abc")', firmware: 'left operand of [ ] is not an array' }], { rrfVersion: '3.5.4' });
     expectNoTypes('echo ("abc")[0]', { rrfVersion: '3.6.0-beta.4' });

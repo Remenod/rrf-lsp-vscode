@@ -250,14 +250,14 @@ describe('TC-UN: unary specifics', () => {
     expectType(typeOfExpr('#true'), 'bool', '#true');
     expectType(typeOfExpr('#pi'), 'float', '#pi');
   });
-  rule('TC-UN-05', '# before a function call is ignored (blocked: the syntax layer rejects #fn(…))', () => {
+  rule('TC-UN-05', '# before a function call is ignored', () => {
     expectType(typeOfExpr('#vector(3, 0)'), 'array<int>', '#vector(...)');
     expectType(typeOfExpr('#abs(-5)'), 'int', '#abs(...)');
   });
   rule('TC-UN-06', 'SHOULD: warn that # has no effect before a constant', () => {
     expectTypes('echo #true', [{ code: CODE.operand, at: '#', severity: 'warning' }]);
   });
-  rule('TC-UN-06', 'SHOULD: … and before a call, where the real type still drives errors (blocked: syntax layer)', () => {
+  rule('TC-UN-06', 'SHOULD: … and before a call, where the real type still drives errors', () => {
     expectTypes('echo #vector(3, 0) + 1', [
       { code: CODE.operand, at: '#', severity: 'warning', mentions: [/#\(/] },
       { code: CODE.operand, at: '#vector(3, 0) + 1', firmware: MSG.numericOperands, mentions: ['array'] },
