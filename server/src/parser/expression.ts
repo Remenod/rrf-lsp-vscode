@@ -277,7 +277,11 @@ export class ExpressionValidator {
           return;
         }
 
-        if (this.isAlpha(operand)) {
+        // '#' written before a function call is legal: the firmware ignores it
+        // (the type checker warns that it has no effect).
+        if (operand.type === TokenType.FunctionName) {
+          this.parseFunctionCall(operand);
+        } else if (this.isAlpha(operand)) {
           this.parseIdentifierExpression();
         } else {
           // String literal, '(', '[', or '{'
@@ -290,7 +294,7 @@ export class ExpressionValidator {
       case TokenType.LParen:
         this.advance();
         this.parseInternal(0);
-        this.expect(TokenType.RParen, "expected ')'");
+        if (this.expect(TokenType.RParen, "expected ')'")) this.parseBracketIndexes();
         return;
 
       // ── Array / object literal  { a, b, c } ──────────────────────────────
@@ -302,7 +306,7 @@ export class ExpressionValidator {
           if (this.current().type === TokenType.RBrace) break;
           this.parseInternal(0);
         }
-        this.expect(TokenType.RBrace, "expected '}'");
+        if (this.expect(TokenType.RBrace, "expected '}'")) this.parseBracketIndexes();
         return;
 
       // ── Array subscript  [ expr ] ─────────────────────────────────────────
@@ -411,7 +415,26 @@ export class ExpressionValidator {
     }
 
     this.expect(TokenType.RParen, `expected ')' after arguments to '${funcName}'`);
+    if (this.current().type === TokenType.LBracket) {
+      // ExpressionParser cannot index a function result: echo/if fail with
+      // "expected ','", and var/set silently drop the index and keep the whole value.
+      this.addError(
+        `the result of '${funcName}(…)' cannot be indexed — assign it to a variable first ` +
+        `(in var/set RepRapFirmware silently drops the index and stores the whole value)`,
+        this.current(),
+      );
+    }
     this.parseTrailingIndexes();
+  }
+
+  // `( … )[i]` and `{ … }[i]`: ParseExpectKet accepts subscripts after a
+  // bracketed expression (no '.field' there).
+  private parseBracketIndexes(): void {
+    while (this.current().type === TokenType.LBracket) {
+      this.advance();
+      this.parseInternal(0);
+      this.expect(TokenType.RBracket, "expected ']'");
+    }
   }
 
   // ── Identifier expression: var.x  global.y  param.z  move.axes… ──────────
