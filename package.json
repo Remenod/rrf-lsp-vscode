@@ -76,6 +76,16 @@
           "default": 255,
           "minimum": 0,
           "markdownDescription": "Report an error when a command exceeds this many bytes. Only the command part counts — indentation, `N` line numbers, `*` checksums and `;` comments are excluded, because RepRapFirmware never stores them in its G-code input buffer.\n\nThe default matches current firmware (256-byte buffer including the terminator → 255 usable bytes). Older RRF 3.0–3.3 builds only accept 100–160 bytes, so lower the limit if you target them.\n\nSet to `0` to disable the check."
+        },
+        "rrfgcode.typeCheck.enabled": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Report expressions that RepRapFirmware would reject at runtime because of their types — `\"a\" + 1`, `if 1`, `abs(\"x\")`, indexing a number, and so on. Only definite errors are reported: when any possible type of an operand works, nothing is shown."
+        },
+        "rrfgcode.rrfVersion": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Target RepRapFirmware version, e.g. `3.5.4` or `3.6.0-rc.3`. Functions and constants added in later versions (`round`, `take`, `input`, …) are reported as unknown. Leave empty to accept everything the newest firmware knows. Suffixes other than `-alpha.N`, `-beta.N` and `-rc.N` are ignored, so `3.5.4-vm.1` means `3.5.4`."
         }
       }
     }

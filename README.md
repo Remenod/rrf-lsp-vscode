@@ -26,6 +26,7 @@ The extension activates automatically for `.g`, `.gcode`, `.gc` and `.gco` files
 * **Operators Syntax Check**: Correctly recognizes invalid operator usage patterns.
 * **Scope Check**: Shows diagnostics based on valid variable definition scope — a variable used after its enclosing block has ended is flagged, just as the firmware would reject it at runtime.
 * **Block Structure Check**: Flags orphan `else`/`elif`, `break`/`continue` outside a loop, and `iterations` used outside a loop.
+* **Type Check**: Reports expressions RepRapFirmware would reject at runtime because of their types — `"a" + 1`, `if 1`, `abs("x")`, `vector(10 / 2, 0)`, indexing a number, comparing objects — with the firmware's own error text. Types follow variables through `if`/`while`, globals are typed across the workspace (including values persisted with `echo >`), and hover shows the inferred type. Only definite errors are reported. See `rrfgcode.typeCheck.enabled` and `rrfgcode.rrfVersion`.
 * **Path Completion**: Path strings inside supported G-code path parameters and path-taking functions auto-complete to existing files in the current RRF workspace, similar to `#include "..."` in C/C++.
 
 ### Argument Validation & File Path Checking
@@ -89,6 +90,8 @@ Fallback path detection is intentionally conservative. It only treats a string a
 This extension contributes the following settings:
 
 * `rrfgcode.activateOnGenericGcode` (bool, default `true`): Enable LSP features for generic non-RRF G-code files.
+* `rrfgcode.typeCheck.enabled` (bool, default `true`): Report expressions whose types RepRapFirmware would reject at runtime.
+* `rrfgcode.rrfVersion` (string, default `""`): Target firmware version, e.g. `3.5.4`. Functions and constants added later (`round`, `take`, `input`, …) are reported. Empty accepts everything the newest firmware knows; `3.5.4-vm.1` means `3.5.4`.
 * `rrfgcode.maxLineLength` (integer, default `255`): Report an error when a command exceeds this many bytes. Only the command part counts — indentation, `N` line numbers, `*` checksums and `;` comments are excluded, because RepRapFirmware never stores them in its G-code input buffer. The default matches current firmware (256-byte buffer including the terminator); older RRF 3.0–3.3 builds only accept 100–160 bytes. Set to `0` to disable the check.
 
 ### Argument Validation Settings

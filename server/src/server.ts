@@ -231,6 +231,8 @@ const DEFAULT_MAX_LINE_LENGTH = 255;
 
 let argCheckConfig: ArgCheckConfig = defaultArgCheckConfig();
 let maxLineLength = DEFAULT_MAX_LINE_LENGTH;
+let typeCheckEnabled = true;
+let rrfVersion = '';
 let configLoaded = false;
 
 function normaliseMaxLineLength(raw: unknown): number {
@@ -240,15 +242,21 @@ function normaliseMaxLineLength(raw: unknown): number {
 
 async function refreshConfig(): Promise<void> {
   try {
-    const [argRaw, maxRaw] = await Promise.all([
+    const [argRaw, maxRaw, typeCheckRaw, versionRaw] = await Promise.all([
       connection.workspace.getConfiguration('rrfgcode.argCheck'),
       connection.workspace.getConfiguration('rrfgcode.maxLineLength'),
+      connection.workspace.getConfiguration('rrfgcode.typeCheck'),
+      connection.workspace.getConfiguration('rrfgcode.rrfVersion'),
     ]);
     argCheckConfig = normaliseArgCheckConfig(argRaw);
     maxLineLength = normaliseMaxLineLength(maxRaw);
+    typeCheckEnabled = (typeCheckRaw as { enabled?: unknown } | null)?.enabled !== false;
+    rrfVersion = typeof versionRaw === 'string' ? versionRaw : '';
   } catch {
     argCheckConfig = defaultArgCheckConfig();
     maxLineLength = DEFAULT_MAX_LINE_LENGTH;
+    typeCheckEnabled = true;
+    rrfVersion = '';
   }
   configLoaded = true;
 }
@@ -472,7 +480,9 @@ function publishDiagnostics(doc: TextDocument): void {
 function publishDiagnosticsForText(uri: string, text: string): void {
   connection.sendDiagnostics({
     uri,
-    diagnostics: computeDiagnostics(uri, text, { symbolTable, argCheckConfig, maxLineLength }),
+    diagnostics: computeDiagnostics(uri, text, {
+      symbolTable, argCheckConfig, maxLineLength, typeCheck: { enabled: typeCheckEnabled }, rrfVersion,
+    }),
   });
 }
 
