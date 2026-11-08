@@ -29,9 +29,35 @@ export class SymbolTable {
     // All URIs ever indexed (for workspace-wide searches)
     private allUris = new Set<string>();
 
+    // Indexed texts, for analyses that need whole documents (workspace global types).
+    private texts = new Map<string, string>();
+
+    // Bumped on every change, so derived caches know when they are stale.
+    private _generation = 0;
+
+    get generation(): number {
+        return this._generation;
+    }
+
+    /** Text of every indexed document, in indexing order. */
+    getIndexedTexts(): ReadonlyMap<string, string> {
+        return this.texts;
+    }
+
+    getText(uri: string): string | undefined {
+        return this.texts.get(uri);
+    }
+
+    /** Names of all declared globals. */
+    getGlobalNames(): string[] {
+        return [...this.globals.keys()];
+    }
+
     // ── Scan a whole document ─────────────────────────────────────────────────
     indexDocument(uri: string, text: string): void {
         this.allUris.add(uri);
+        this.texts.set(uri, text);
+        this._generation++;
 
         // Clear old entries for this document
         this.locals.set(uri, new Map());
@@ -99,6 +125,8 @@ export class SymbolTable {
     // ── Remove document ───────────────────────────────────────────────────────
     removeDocument(uri: string): void {
         this.allUris.delete(uri);
+        this.texts.delete(uri);
+        this._generation++;
         this.locals.delete(uri);
         this.params.delete(uri);
         for (const [name, decls] of this.globals) {
