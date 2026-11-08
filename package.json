@@ -25,7 +25,6 @@
     "cnc"
   ],
   "activationEvents": [
-    "onLanguage:rrf-gcode",
     "onLanguage:gcode"
   ],
   "main": "./client/out/extension.js",
