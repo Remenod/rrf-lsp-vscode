@@ -63,3 +63,8 @@ export function lintCorpus(extra: { typeCheck?: { enabled: boolean }; rrfVersion
     } as DiagnosticsOptions),
   }));
 }
+
+/** Every corpus source as `{ fileUrl: text }`, for hover tests that need the whole workspace indexed. */
+export function corpusDocs(): Record<string, string> {
+  return Object.fromEntries(corpusFiles().map(f => [pathToFileURL(f).toString(), fs.readFileSync(f, 'utf8')]));
+}

@@ -73,8 +73,12 @@ describe('TC-STMT: statements', () => {
     expectTypes(src('var x = 1', 'set var.x = true * 2'), [{ code: CODE.operand, at: 'true * 2', line: 1 }]);
     expectTypes('global q = -"a"', [{ code: CODE.operand, at: '-"a"' }]);
   });
-  rule('TC-STMT-03', 'a type error in an abort message is a warning', () => {
-    expectTypes('abort "code " + 5', [{ code: CODE.operand, at: '"code " + 5', severity: 'warning', firmware: MSG.numericOperands }]);
+  rule('TC-STMT-03', 'a type error in an abort message is an error that names the replaced message (D-7)', () => {
+    expectTypes('abort "code " + 5', [{
+      code: CODE.operand, at: '"code " + 5', severity: 'error', firmware: MSG.numericOperands,
+      mentions: [/invalid expression after 'abort'/],
+    }]);
+    expectTypes(src('var c = 3', 'abort {"code " + var.c}'), [{ code: CODE.operand, at: '"code " + var.c', line: 1, severity: 'error' }]);
   });
   guard('TC-STMT-03', 'well-formed abort messages', () => expectNoTypes('abort\nabort "x"\nabort "code " ^ 5\nabort 5'));
 });

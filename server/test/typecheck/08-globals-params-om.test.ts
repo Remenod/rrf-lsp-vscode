@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 import { rule, guard, CODE, typeAt, expectType, expectTypes, expectNoTypes, typeOfExpr } from './contract';
 import { MSG } from './model';
 import { src } from '../helpers/harness';
+import { corpusAvailable, corpusDocs } from '../helpers/corpus';
 
 const USE = 'echo global.g';
 const tg = (docs: Record<string, string>, use = USE) => typeAt(use, 0, 'global.g', 0, { extraDocs: docs });
@@ -28,6 +29,12 @@ describe('TC-GLB-01: union over every declaration and assignment in the workspac
       { extraDocs: { 'untitled:globals.g': 'global g = "text"' } });
     expectTypes('if global.g\n  echo 1', [{ code: CODE.boolean, at: 'global.g' }],
       { extraDocs: { 'untitled:globals.g': 'global g = 0' } });
+  });
+  rule('TC-GLB-01', 'assignments that read globals resolve as a least fixed point', () => {
+    expectType(tg({ 'untitled:globals.g': 'global g = 170', 'untitled:ccw.g': 'set global.g = global.g + 1' }), 'int', 'self increment');
+    expectType(tg({ 'untitled:globals.g': 'global g = 1', 'untitled:half.g': 'set global.g = global.g / 2' }), 'int | float', 'self division');
+    const mutual = { 'untitled:globals.g': 'global g = 1\nglobal h = "s"', 'untitled:a.g': 'set global.g = global.h', 'untitled:b.g': 'set global.h = global.g' };
+    expectType(tg(mutual), 'int | string', 'mutual');
   });
   guard('TC-GLB-01', 'a union with one valid member is silent', () => {
     expectNoTypes('echo global.g + 1', { extraDocs: { 'untitled:globals.g': 'global g = 1', 'untitled:a.g': 'set global.g = "s"' } });
@@ -60,6 +67,19 @@ describe('TC-GLB-02: persistence writes (the sys/user/variables idiom)', () => {
     const mig = 'echo >{"0:/sys/user/variables/X.g"} "set global." ^ "g" ^ " = " ^ "zzz"';
     expectType(tg({ ...decl, 'untitled:migrate.g': mig }), 'float', 'computed name');
   });
+  rule('TC-GLB-02', 'corpus shapes: leading blanks, comments, the quoted wrapper', () => {
+    const w = (expr: string, ...pre: string[]) => tg({ ...decl, 'untitled:w.g': src(...pre, `echo >"0:/sys/user/variables/G.g" ${expr}`) });
+    expectType(w('"  set global.g = " ^ var.v', 'var v = true'), 'float | bool', 'leading blanks');
+    expectType(w('"set global.g = " ^ var.v ^ "; every " ^ var.v ^ " layers"', 'var v = 2'), 'int | float', 'comment piece after the value');
+    expectType(w('"set global.g = 0 ; disabled"'), 'int | float', 'comment inside a literal write');
+    expectType(w('"set global.g = "^{global.g}^" ; note"'), 'float', 'backup idiom with a comment');
+    expectType(w('"set global.g = """^{var.m}^""""', 'var m = 5'), 'float | string', 'quoted wrapper');
+  });
+  rule('TC-GLB-02', 'non-literal text and extra pieces are "other" writes', () => {
+    const w = (expr: string, ...pre: string[]) => tg({ ...decl, 'untitled:w.g': src(...pre, `echo >"0:/sys/user/variables/G.g" ${expr}`) });
+    expectType(w('" set global.g = var.n"'), 'unknown', 'generated code');
+    expectType(w('"set global.g = " ^ var.a ^ "," ^ var.b', 'var a = 1', 'var b = 2'), 'unknown', 'extra piece after the value');
+  });
   guard('TC-GLB-02', 'reading the global inside an echo is not a write', () => {
     expectNoTypes('echo >"0:/log.txt" "value " ^ global.g', { extraDocs: decl });
   });
@@ -77,6 +97,66 @@ describe('TC-GLB-03: unknown globals', () => {
     const b = { 'untitled:2.g': 'set global.g = "s"', 'untitled:1.g': 'global g = 1' };
     assert.equal(tg(a), tg(b));
     expectType(tg(a), 'int | string', 'order a');
+  });
+});
+
+describe('TC-GLB-04: a global that is only ever null is unknown (decision D-5)', () => {
+  const NULL_DECL = { 'untitled:globals.g': 'global g = null' };
+  rule('TC-GLB-04', 'null declarations, sets and literal writes only', () => {
+    expectType(typeOfExpr('null'), 'null', 'control: null itself is typed');
+    expectType(tg({ 'untitled:globals.g': 'global g = 1' }), 'int', 'control: a non-null declaration is typed');
+    expectType(tg(NULL_DECL), 'unknown', 'declaration only');
+    expectType(tg({
+      ...NULL_DECL,
+      'untitled:end.g': 'set global.g = null',
+      'untitled:reset.g': 'echo >"0:/sys/user/variables/G.g" "set global.g = null"',
+    }), 'unknown', 'declaration, set and literal write');
+  });
+  rule('TC-GLB-04', 'the backup idiom and computed-name writes add no visible value', () => {
+    expectType(typeOfExpr('null'), 'null', 'control: null itself is typed');
+    const backup = 'echo >"0:/sys/user/state/G.g" "set global.g = "^{global.g}';
+    expectType(tg({ 'untitled:globals.g': 'global g = 1', 'untitled:backup.g': backup }), 'int', 'control: backup of a non-null global');
+    expectType(tg({ ...NULL_DECL, 'untitled:backup.g': backup }), 'unknown', 'backup idiom');
+    const tcr = src('var n = "g"', 'var d = 2.5', 'echo >"0:/sys/user/variables/G.g" "set global."^{var.n}^" = "^{var.d}');
+    expectType(tg({ ...NULL_DECL, 'untitled:tcr.g': tcr }), 'unknown', 'computed name (the Tool Change Retraction shape)');
+  });
+  rule('TC-GLB-04', 'any non-null visible value keeps the union', () => {
+    expectType(tg({ ...NULL_DECL, 'untitled:a.g': 'set global.g = 5' }), 'null | int', 'set');
+    const adjust = src('var v = 2.5', 'echo >"0:/sys/user/variables/G.g" "set global.g = " ^ var.v');
+    expectType(tg({ ...NULL_DECL, 'untitled:adjust.g': adjust }), 'null | float', 'persistence write');
+  });
+  rule('TC-GLB-04', 'local variables are not affected', () => {
+    expectType(typeOfExpr('var.x', { prelude: ['var x = null'] }), 'null', 'local');
+    expectTypes(src('var x = null', 'echo var.x * 2'), [{ code: CODE.operand, at: 'var.x * 2', line: 1 }]);
+  });
+  guard('TC-GLB-04', 'unguarded use of a null-only global is not reported', () => {
+    const docs = { ...NULL_DECL, 'untitled:stop.g': 'set global.g = null' };
+    expectNoTypes('G1 E{global.g * 2} F3000', { extraDocs: docs });
+    expectNoTypes('if global.g > 0\n  echo 1', { extraDocs: docs });
+    expectNoTypes('echo -global.g', { extraDocs: docs });
+  });
+});
+
+describe('TC-GLB: real globals of the 4.2.0 corpus', { skip: corpusAvailable() ? false : 'corpus not fetched — run `npm run corpus:fetch`' }, () => {
+  let docs: Record<string, string> | undefined;
+  const at = (name: string) => typeAt(`echo global.${name}`, 0, `global.${name}`, 0, { extraDocs: docs ??= corpusDocs() });
+  rule('TC-GLB-04', 'the four retraction distances are unknown (only null is visible)', () => {
+    expectType(at('chamberWait'), 'bool | null', 'control: a nullable global keeps its type');
+    for (const g of ['tool0RetractDistance', 'tool1RetractDistance', 'tool0ExtrudeDistance', 'tool1ExtrudeDistance']) {
+      expectType(at(g), 'unknown', g);
+    }
+  });
+  rule('TC-GLB-02', 'chamberWait is bool | null: declared true, written null/false/true by Wait for Chamber Temp', () => {
+    expectType(at('chamberWait'), 'bool | null', 'chamberWait');
+  });
+  rule('TC-GLB-02', 'xCompMode is string: the quoted wrapper in Mesh Calibration/Reset', () => {
+    expectType(at('xCompMode'), 'string', 'xCompMode');
+  });
+  rule('TC-GLB-01', 'probePickAngle is int: ±1 in the pickup-angle macros, backup write with a comment', () => {
+    expectType(at('probePickAngle'), 'int', 'probePickAngle');
+  });
+  rule('TC-GLB-02', 'zOffset is unknown: Save Current Z - Offset writes generated code', () => {
+    expectType(at('zOffset'), 'unknown', 'zOffset');
   });
 });
 
