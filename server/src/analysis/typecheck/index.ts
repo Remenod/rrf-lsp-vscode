@@ -13,7 +13,9 @@ export { TypeDiag } from './infer';
 export { display as displayType } from './types';
 export type { Ty } from './types';
 
-interface DocEntry { text: string; doc: Doc; results: Map<string, FlowResult> }
+/** Contributions of one document to the globals, for the global values it read while running. */
+interface Memo { reads: Array<[string, string]>; contributions: Contribution[] }
+interface DocEntry { text: string; doc: Doc; results: Map<string, FlowResult>; memo: Memo[] }
 interface Solved {
     types: Map<string, Ty>;
     /** The texts the solution was computed from: every document that mentions `global`. */
@@ -34,7 +36,7 @@ function cacheFor(st: SymbolTable): Cache {
     if (!c || c.generation !== st.generation) {
         // Parsed documents stay valid across generations; only flow results depend on the workspace.
         const docs = new Map<string, DocEntry>();
-        for (const [uri, e] of c?.docs ?? []) docs.set(uri, { text: e.text, doc: e.doc, results: new Map() });
+        for (const [uri, e] of c?.docs ?? []) docs.set(uri, { text: e.text, doc: e.doc, results: new Map(), memo: e.memo });
         c = { generation: st.generation, globals: null, previous: c?.globals ?? c?.previous ?? null, docs };
         caches.set(st, c);
     }
@@ -44,13 +46,37 @@ function cacheFor(st: SymbolTable): Cache {
 function docFor(c: Cache, uri: string, text: string): DocEntry {
     let e = c.docs.get(uri);
     if (!e || e.text !== text) {
-        e = { text, doc: new Doc(text.split(/\r?\n/)), results: new Map() };
+        e = { text, doc: new Doc(text.split(/\r?\n/)), results: new Map(), memo: [] };
         c.docs.set(uri, e);
     }
     return e;
 }
 
 const MAX_GLOBAL_PASSES = 10;
+const MEMO_PER_DOC = 12;
+
+/**
+ * Run one document for its contributions. A document's contributions depend only
+ * on its text and on the global values it reads, so runs are memoised on those
+ * reads: after an edit only the edited document (and those reading globals whose
+ * value changed) run again.
+ */
+function contributionsOf(e: DocEntry, read: (name: string) => Ty): Contribution[] {
+    const hit = e.memo.find(m => m.reads.every(([n, k]) => key(read(n)) === k));
+    if (hit) return hit.contributions;
+    const reads = new Map<string, string>();
+    const contributions: Contribution[] = [];
+    runFlow(e.doc, {
+        version: null,
+        globals: n => { const t = read(n); reads.set(n, key(t)); return t; },
+        report: false,
+        record: false,
+        contribute: k => contributions.push(k),
+    });
+    e.memo.unshift({ reads: [...reads], contributions });
+    if (e.memo.length > MEMO_PER_DOC) e.memo.pop();
+    return contributions;
+}
 
 /**
  * Workspace types of every declared global (SPEC TC-GLB-01..04): the union of
@@ -67,7 +93,7 @@ function solveGlobals(st: SymbolTable, c: Cache): Map<string, Ty> {
         return prev.types;
     }
     const declared = new Set(st.getGlobalNames());
-    const docs = [...basis].map(([uri, text]) => docFor(c, uri, text).doc);
+    const docs = [...basis].map(([uri, text]) => docFor(c, uri, text));
     let env = new Map<string, Ty>();
     const read = (name: string): Ty => (declared.has(name) ? env.get(name) ?? BOTTOM : UNKNOWN);
     let converged = false;
@@ -79,7 +105,7 @@ function solveGlobals(st: SymbolTable, c: Cache): Map<string, Ty> {
             if (k.kind === 'assign') assigns.set(k.name, [...(assigns.get(k.name) ?? []), k.t]);
             else elems.set(k.name, [...(elems.get(k.name) ?? []), k]);
         };
-        for (const doc of docs) runFlow(doc, { version: null, globals: read, report: false, record: false, contribute });
+        for (const e of docs) for (const k of contributionsOf(e, read)) contribute(k);
         const next = new Map<string, Ty>();
         for (const [name, ts] of assigns) {
             let t = union(...ts);
