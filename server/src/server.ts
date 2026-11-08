@@ -17,8 +17,6 @@ import {
   SignatureHelp,
   SignatureInformation,
   ParameterInformation,
-  DiagnosticSeverity,
-  Diagnostic,
   SemanticTokensParams,
   SemanticTokens,
   SemanticTokensBuilder,
@@ -53,24 +51,24 @@ import {
   NAMED_CONSTANTS,
   SEMANTIC_TOKEN_TYPES, SEMANTIC_TOKEN_MODIFIERS,
 } from './parser/types';
-import { validateLine, DiagnosticContext } from './parser/expression';
 import { SymbolTable } from './analysis/symbolTable';
 import { buildHover } from './analysis/hover';
-import { isValidOmPath, isOmIndexAvailable, allOmPaths } from './analysis/objectModelIndex';
+import { isOmIndexAvailable, allOmPaths } from './analysis/objectModelIndex';
 import { buildRenameEdit } from './analysis/rename';
 import { buildReferences } from './analysis/references';
 import { findPathStringContext, buildPathCompletions } from './analysis/pathCompletion';
 import {
-  validateGCodeArgs, validateFunctionPathArgs, getSdRootForUri, invalidateSdRootCache,
+  invalidateSdRootCache,
 } from './analysis/argValidators';
 import {
   ArgCheckConfig, defaultArgCheckConfig, normaliseArgCheckConfig,
 } from './analysis/argCheckConfig';
 import {
-  buildCodeActions, CMD_ADD_PATH_IGNORE, CMD_SET_MAX_LINE_LENGTH, LINE_TOO_LONG_CODE,
+  buildCodeActions, CMD_ADD_PATH_IGNORE, CMD_SET_MAX_LINE_LENGTH,
 } from './analysis/codeActions';
 import { pathLocationAtCursor } from './analysis/pathDefinition';
 import { lineIndent, findTokenAtChar } from './analysis/utils';
+import { computeDiagnostics } from './analysis/diagnostics';
 
 // ── Connection setup ──────────────────────────────────────────────────────────
 const connection = createConnection(ProposedFeatures.all);
@@ -461,42 +459,6 @@ function getAllDocTexts(): Map<string, string> {
 
 // ── Diagnostics ───────────────────────────────────────────────────────────────
 
-interface CommandPart { text: string; start: number; end: number }
-
-/**
- * Extract the part of a line that actually lands in the firmware's G-code
- * buffer: strips leading whitespace, an `N<digits>` line number, a trailing
- * `*<digits>` checksum and everything from an unquoted `;` on.  Returns null
- * for blank and comment-only lines.
- */
-function commandPartOfLine(lineText: string): CommandPart | null {
-  // Comment start: the first ';' outside a "…" string.  A doubled "" escape
-  // toggles the string state twice, so the tracking stays correct.
-  let inString = false;
-  let end = lineText.length;
-  for (let i = 0; i < lineText.length; i++) {
-    const c = lineText[i];
-    if (c === '"') inString = !inString;
-    else if (c === ';' && !inString) { end = i; break; }
-  }
-
-  let start = 0;
-  while (start < end && (lineText[start] === ' ' || lineText[start] === '\t')) start++;
-
-  const lineNumber = /^[Nn]\d+[ \t]*/.exec(lineText.slice(start, end));
-  if (lineNumber) start += lineNumber[0].length;
-
-  while (end > start && (lineText[end - 1] === ' ' || lineText[end - 1] === '\t')) end--;
-  const checksum = /\*\d+$/.exec(lineText.slice(start, end));
-  if (checksum) {
-    end -= checksum[0].length;
-    while (end > start && (lineText[end - 1] === ' ' || lineText[end - 1] === '\t')) end--;
-  }
-
-  if (end <= start) return null;
-  return { text: lineText.slice(start, end), start, end };
-}
-
 /** Publish diagnostics for an open TextDocument. */
 function publishDiagnostics(doc: TextDocument): void {
   publishDiagnosticsForText(doc.uri, doc.getText());
@@ -505,100 +467,13 @@ function publishDiagnostics(doc: TextDocument): void {
 /**
  * Compute and publish diagnostics for any URI + text pair.
  *
- * Factored out of publishDiagnostics so it can be called for background
- * (non-open) files discovered during the workspace scan.
+ * Also used for background (non-open) files discovered during the workspace scan.
  */
 function publishDiagnosticsForText(uri: string, text: string): void {
-  const lines = text.split(/\r?\n/);
-  const diagnostics: Diagnostic[] = [];
-
-  const omChecker = isOmIndexAvailable() ? isValidOmPath : undefined;
-
-  // Resolve the SD root once per document.  validateGCodeArgs reuses this
-  // for every G/M/T line so we don't repeatedly walk the filesystem.
-  const sdRoot = getSdRootForUri(uri);
-
-  for (let i = 0; i < lines.length; i++) {
-    const lineText = lines[i];
-
-    // Line-length check runs before tokenization so it is reported even for
-    // lines that also contain lexer errors.  Only the command part is measured
-    // (in UTF-8 bytes, matching the firmware buffer) — comments, indentation,
-    // N line numbers and *checksums are excluded because the firmware never
-    // stores them.
-    if (maxLineLength > 0) {
-      const part = commandPartOfLine(lineText);
-      const bytes = part ? Buffer.byteLength(part.text, 'utf8') : 0;
-      if (part && bytes > maxLineLength) {
-        // Column where the byte budget runs out (the range is expressed in
-        // UTF-16 columns even though the limit is measured in UTF-8 bytes).
-        let overflowCol = part.start;
-        let used = 0;
-        for (const ch of part.text) {
-          used += Buffer.byteLength(ch, 'utf8');
-          if (used > maxLineLength) break;
-          overflowCol += ch.length;
-        }
-        diagnostics.push({
-          severity: DiagnosticSeverity.Error,
-          range: mkRange(i, overflowCol, i, part.end),
-          message:
-            `Command is ${bytes} bytes long, exceeding rrfgcode.maxLineLength (${maxLineLength}). ` +
-            `RepRapFirmware rejects commands longer than its input buffer with "GCode command too long".`,
-          source: 'rrf-gcode',
-          code: LINE_TOO_LONG_CODE,
-          data: { length: bytes, max: maxLineLength },
-        });
-      }
-    }
-
-    const indent = lineIndent(lineText);
-    const lexer = new Lexer(lineText, i);
-    const tokens = lexer.tokenize();
-
-    for (const e of lexer.errors) {
-      diagnostics.push({
-        severity: DiagnosticSeverity.Error,
-        range: mkRange(e.line, e.start, e.line, e.end),
-        message: e.message,
-        source: 'rrf-gcode',
-      });
-    }
-
-    if (lexer.errors.length > 0) continue;
-
-    const ctx: DiagnosticContext = {
-      symbolTable, uri, line: i, indent,
-      isValidOmPath: omChecker,
-      docLines: lines,
-    };
-
-    for (const err of validateLine(tokens, lineText, ctx)) {
-      const sev = err.severity === 'warning' ? DiagnosticSeverity.Warning
-        : err.severity === 'information' ? DiagnosticSeverity.Information
-          : DiagnosticSeverity.Error;
-      diagnostics.push({
-        severity: sev,
-        range: mkRange(err.line, err.start, err.line, err.end),
-        message: err.message,
-        source: 'rrf-gcode',
-      });
-    }
-
-    diagnostics.push(...validateGCodeArgs(
-      tokens,
-      lineText,
-      uri,
-      sdRoot,
-      argCheckConfig,
-    ));
-
-    // Path-taking functions (fileexists/fileread) can appear on any line, not
-    // just G/M/T command lines, so they are validated separately.
-    diagnostics.push(...validateFunctionPathArgs(tokens, sdRoot, argCheckConfig));
-  }
-
-  connection.sendDiagnostics({ uri, diagnostics });
+  connection.sendDiagnostics({
+    uri,
+    diagnostics: computeDiagnostics(uri, text, { symbolTable, argCheckConfig, maxLineLength }),
+  });
 }
 
 // ── Hover ─────────────────────────────────────────────────────────────────────
@@ -1402,10 +1277,6 @@ function styleFor(
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
-function mkRange(sl: number, sc: number, el: number, ec: number): Range {
-  return { start: { line: sl, character: sc }, end: { line: el, character: ec } };
-}
-
 function metaInsertText(name: string): string {
   switch (name) {
     case 'if': return 'if $1';
