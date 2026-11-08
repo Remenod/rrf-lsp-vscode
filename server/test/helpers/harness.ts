@@ -51,8 +51,14 @@ export interface LintOptions {
   argCheck?: Partial<ArgCheckConfig> & { paths?: Partial<ArgCheckConfig['paths']> };
   /** File path to lint as (inside an SD tree for path checks). Defaults to a bare virtual URI. */
   file?: string;
-  /** Target firmware version, e.g. '3.5.4'. Not implemented yet: the setting is part of the type-check spec. */
+  /** Target firmware version, e.g. '3.5.4' (type-check spec, `rrfgcode.rrfVersion`). */
   rrfVersion?: string;
+  /**
+   * Type checker on/off (type-check spec, `rrfgcode.typeCheck.enabled`). The harness defaults to
+   * OFF so the syntax/scope suites keep testing exactly what they were written for; the
+   * type-check suites switch it on explicitly. `'omit'` leaves the option out entirely.
+   */
+  typeCheck?: boolean | 'omit';
   /** Extra documents to index into the symbol table (for cross-file globals). */
   extraDocs?: Record<string, string>;
 }
@@ -65,7 +71,7 @@ export function lint(text: string, opts: LintOptions = {}): Diagnostic[] {
   for (const [u, t] of Object.entries(opts.extraDocs ?? {})) symbolTable.indexDocument(u, t);
   symbolTable.indexDocument(uri, text);
   const base = defaultArgCheckConfig();
-  const o: DiagnosticsOptions = {
+  const o: DiagnosticsOptions & { typeCheck?: { enabled: boolean }; rrfVersion?: string } = {
     symbolTable,
     maxLineLength: opts.maxLineLength ?? 255,
     argCheckConfig: {
@@ -76,7 +82,9 @@ export function lint(text: string, opts: LintOptions = {}): Diagnostic[] {
       },
     },
   };
-  return computeDiagnostics(uri, text, o);
+  if (opts.typeCheck !== 'omit') o.typeCheck = { enabled: opts.typeCheck ?? false };
+  if (opts.rrfVersion !== undefined) o.rrfVersion = opts.rrfVersion;
+  return computeDiagnostics(uri, text, o as DiagnosticsOptions);
 }
 
 export const msgs = (ds: Diagnostic[]) => ds.map(d => d.message);

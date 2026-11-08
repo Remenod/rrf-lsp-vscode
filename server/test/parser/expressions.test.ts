@@ -185,6 +185,18 @@ describe('expressions: function arity (min-1, min, max, max+1)', () => {
 describe('expressions: known gaps', () => {
   expectDiag([
     { src: 'echo exists(move.axes[0], move.axes[1])', match: /.+/, todo: "exists() with 2 operands is not rejected; firmware: expected ')'" },
+    // ExpressionParser cannot index a function result: echo/if fail ("expected ','" / extra characters) and
+    // var/set silently DROP the index (no CheckForExtraCharacters), storing the whole array.
+    { src: 'echo abs(1)[0]', match: /.+/, todo: 'indexing a function result is accepted; the firmware rejects it' },
+    { src: "var r = fileread(\"a.csv\", 0, 2, ',')[0]", match: /.+/, todo: 'var/set silently drop [0] after a function call' },
+  ]);
+  // ParseExpectKet accepts trailing indexes after ( … ) and { … } (blocks type-check TC-ARR-07 / TC-VER-03).
+  expectClean([
+    { src: 'echo {1, 2}[0]', todo: "syntax layer reports unexpected '[' on a valid bracket-expression index" },
+    { src: 'var a = {1, 2}\necho (var.a)[1]', todo: "syntax layer reports unexpected '['" },
+    { src: 'echo {{1, 2}, {3,}}[0][1]', todo: "syntax layer reports unexpected '['" },
+    // '#' before a function call is legal and silently ignored by the firmware (blocks TC-UN-05/06).
+    { src: 'echo #abs(-5)', todo: "syntax layer reports unexpected 'abs'; firmware ignores the '#'" },
   ]);
 });
 

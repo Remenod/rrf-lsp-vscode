@@ -92,8 +92,9 @@ describe('echo', () => {
   ]);
 });
 
-describe('echo: known gaps', () => {
-  expectDiag([{ src: 'echo 1,', match: /.+/, todo: 'trailing comma in an echo list is not reported' }]);
+describe('echo: trailing comma', () => {
+  // StringParser::ProcessEchoCommand skips a comma and stops at end of line, so a trailing comma is legal.
+  expectSilent(['echo 1,', 'echo "a", "b",']);
 });
 
 describe('if / elif / else / while', () => {

@@ -38,22 +38,28 @@ export function corpusFiles(): string[] {
 import { pathToFileURL } from 'url';
 import { Diagnostic } from 'vscode-languageserver/node';
 import { SymbolTable } from '../../src/analysis/symbolTable';
-import { computeDiagnostics } from '../../src/analysis/diagnostics';
+import { computeDiagnostics, DiagnosticsOptions } from '../../src/analysis/diagnostics';
 import { defaultArgCheckConfig } from '../../src/analysis/argCheckConfig';
 
 export interface CorpusResult { rel: string; text: string; diagnostics: Diagnostic[] }
 
 /** Lint the whole corpus the way the server does after its workspace scan: every file indexed first. */
-export function lintCorpus(): CorpusResult[] {
+export function lintCorpus(extra: { typeCheck?: { enabled: boolean }; rrfVersion?: string; reverseIndexOrder?: boolean } = {}): CorpusResult[] {
   const files = corpusFiles();
   const texts = new Map(files.map(f => [f, fs.readFileSync(f, 'utf8')]));
   const symbolTable = new SymbolTable();
-  for (const [f, t] of texts) symbolTable.indexDocument(pathToFileURL(f).toString(), t);
+  const order = [...texts];
+  if (extra.reverseIndexOrder) order.reverse();
+  for (const [f, t] of order) symbolTable.indexDocument(pathToFileURL(f).toString(), t);
   const cfg = defaultArgCheckConfig();
   cfg.paths.ignore = CORPUS_SETTINGS.ignore;
   return files.map(f => ({
     rel: path.relative(CORPUS_ROOT, f).split(path.sep).join('/'),
     text: texts.get(f)!,
-    diagnostics: computeDiagnostics(pathToFileURL(f).toString(), texts.get(f)!, { symbolTable, argCheckConfig: cfg, maxLineLength: 255 }),
+    diagnostics: computeDiagnostics(pathToFileURL(f).toString(), texts.get(f)!, {
+      symbolTable, argCheckConfig: cfg, maxLineLength: 255,
+      ...(extra.typeCheck ? { typeCheck: extra.typeCheck } : {}),
+      ...(extra.rrfVersion !== undefined ? { rrfVersion: extra.rrfVersion } : {}),
+    } as DiagnosticsOptions),
   }));
 }

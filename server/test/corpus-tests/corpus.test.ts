@@ -14,7 +14,9 @@ import { DiagnosticSeverity as Sev } from 'vscode-languageserver/node';
 import { TokenType as T } from '../../src/parser/types';
 import { lex, readData, SERVER_ROOT } from '../helpers/harness';
 import { corpusAvailable, corpusFiles, corpusSha, lintCorpus, CORPUS_ROOT, CorpusResult } from '../helpers/corpus';
-import { FORK_FUNCTIONS } from '../typecheck/model';
+import { FN_3_5_4 } from '../typecheck/model';
+
+const FORK_FUNCTIONS: Record<string, unknown> = { ...FN_3_5_4, exists: true };
 
 const PINNED_SHA = 'bfdc95eb2325039b9a63c8c78794c2a2ab87c771';
 const skip = corpusAvailable() ? false : 'corpus not fetched — run `npm run corpus:fetch`';
