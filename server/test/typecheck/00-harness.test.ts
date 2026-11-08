@@ -1,12 +1,12 @@
-// Live self-tests of the type-check harness. With nothing implemented yet, a broken helper would
-// look exactly like an unimplemented rule — these make sure it cannot.
+// Live self-tests of the type-check harness: a broken helper would look exactly like an
+// unimplemented or broken rule — these make sure it cannot.
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { Diagnostic, DiagnosticSeverity } from 'vscode-languageserver/node';
 import {
   canonType, diffDiagnostics, locate, matchDiagnostics, typeAt, typeOfExpr, typeDiags, lostDiags,
-  hoverText, CODE, isImplemented, lintTc, Expect,
+  hoverText, CODE, ALL_CODES, isImplemented, lintTc, Expect,
 } from './contract';
 
 const mk = (line: number, s: number, e: number, message: string, code?: string, severity: DiagnosticSeverity = DiagnosticSeverity.Error): Diagnostic =>
@@ -103,13 +103,13 @@ describe('harness: typeAt reads hover', () => {
   });
 });
 
-describe('harness: baseline with nothing implemented', () => {
-  it('the checker adds nothing today', () => {
-    for (const t of ['echo "a" + 1', 'if 1\n  echo 1', 'echo abs("x")', 'var a = 1\necho var.a[0]']) {
-      assert.deepEqual(typeDiags(t), [], t);
+describe('harness: baseline', () => {
+  it('everything the checker adds carries a type-check code', () => {
+    for (const t of ['echo "a" + 1', 'if 1\n  echo 1', 'echo abs("x")', 'var a = 1\necho var.a[0]', 'echo 1 +', 'G1 X10 X20']) {
+      assert.deepEqual(typeDiags(t).filter(d => !ALL_CODES.has(String(d.code))).map(d => d.message), [], t);
     }
   });
-  it('the checker removes nothing today', () => {
+  it('the checker removes nothing', () => {
     for (const t of ['echo 1 +', 'G1 X10 X20', 'echo var.nope', 'M117 ' + 'x'.repeat(300)]) {
       assert.deepEqual(lostDiags(t), [], t);
     }

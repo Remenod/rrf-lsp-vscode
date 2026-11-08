@@ -11,12 +11,17 @@ import { validateGCodeArgs, validateFunctionPathArgs, getSdRootForUri } from './
 import { ArgCheckConfig } from './argCheckConfig';
 import { LINE_TOO_LONG_CODE } from './codeActions';
 import { lineIndent } from './utils';
+import { typeDiagnostics } from './typecheck';
 
 export interface DiagnosticsOptions {
   symbolTable: SymbolTable;
   argCheckConfig: ArgCheckConfig;
   /** 0 disables the line-length check. */
   maxLineLength: number;
+  /** The type checker (`rrfgcode.typeCheck.enabled`); omitted means enabled. */
+  typeCheck?: { enabled: boolean };
+  /** Target firmware version (`rrfgcode.rrfVersion`); empty or omitted is version-neutral. */
+  rrfVersion?: string;
 }
 
 function mkRange(sl: number, sc: number, el: number, ec: number): Range {
@@ -154,6 +159,22 @@ export function computeDiagnostics(uri: string, text: string, opts: DiagnosticsO
     // Path-taking functions (fileexists/fileread) can appear on any line, not
     // just G/M/T command lines, so they are validated separately.
     diagnostics.push(...validateFunctionPathArgs(tokens, sdRoot, argCheckConfig));
+  }
+
+  if (opts.typeCheck?.enabled !== false) {
+    // A line that already has an error gets no type diagnostics (TC-DIAG-06).
+    const blocked = new Set<number>();
+    for (const d of diagnostics) if (d.severity === DiagnosticSeverity.Error) blocked.add(d.range.start.line);
+    for (const d of typeDiagnostics(symbolTable, uri, text, opts.rrfVersion)) {
+      if (blocked.has(d.line)) continue;
+      diagnostics.push({
+        severity: d.severity === 'warning' ? DiagnosticSeverity.Warning : DiagnosticSeverity.Error,
+        range: mkRange(d.line, d.start, d.line, d.end),
+        message: d.message,
+        source: 'rrf-gcode',
+        code: d.code,
+      });
+    }
   }
 
   return diagnostics;
