@@ -69,6 +69,7 @@ import {
 import { pathLocationAtCursor } from './analysis/pathDefinition';
 import { lineIndent, findTokenAtChar } from './analysis/utils';
 import { computeDiagnostics } from './analysis/diagnostics';
+import { globalTypesSignature } from './analysis/typecheck';
 
 // ── Connection setup ──────────────────────────────────────────────────────────
 const connection = createConnection(ProposedFeatures.all);
@@ -212,6 +213,9 @@ connection.onInitialized(async () => {
   } catch (e) {
     connection.console.warn(`RRF LSP: workspace scan failed: ${e}`);
   }
+  // Documents opened before the scan finished were typed against an
+  // incomplete set of global assignments.
+  for (const doc of documents.all()) publishDiagnostics(doc);
 });
 
 // ── Configuration ────────────────────────────────────────────────────────────
@@ -365,10 +369,12 @@ documents.onDidOpen(e => onDocumentChange(e.document));
 documents.onDidChangeContent(e => onDocumentChange(e.document));
 documents.onDidClose((e: TextDocumentChangeEvent<TextDocument>) => {
   const filePath = URI.parse(e.document.uri).fsPath;
+  const globalsBefore = globalTypesSignature(symbolTable);
   try {
     if (fs.existsSync(filePath)) {
       const text = fs.readFileSync(filePath, 'utf8');
       symbolTable.indexDocument(e.document.uri, text);
+      refreshIfGlobalsChanged(globalsBefore, e.document.uri);
       // Re-publish diagnostics from the saved file so the Problems panel stays
       // accurate even after the editor tab is closed.
       backgroundDiagnosticUris.add(e.document.uri);
@@ -427,15 +433,42 @@ connection.onDidChangeWatchedFiles((params: DidChangeWatchedFilesParams) => {
 });
 
 function onDocumentChange(doc: TextDocument): void {
+  const globalsBefore = globalTypesSignature(symbolTable);
   symbolTable.indexDocument(doc.uri, doc.getText());
+  const publish = () => {
+    publishDiagnostics(doc);
+    refreshIfGlobalsChanged(globalsBefore, doc.uri);
+  };
   // Lazy first-load of config so diagnostics on the very first opened
   // document reflect user settings, not just defaults.  Subsequent changes
   // are pushed by didChangeConfiguration.
   if (!configLoaded) {
-    refreshConfig().then(() => publishDiagnostics(doc));
+    refreshConfig().then(publish);
   } else {
-    publishDiagnostics(doc);
+    publish();
   }
+}
+
+// ── Cross-file type refresh ───────────────────────────────────────────────────
+//
+// Global types are inferred from every file, so an edit in one file can change
+// type diagnostics in others.  Open documents are refreshed at once; closed
+// files with published diagnostics shortly after the edits stop.
+const BACKGROUND_REFRESH_DELAY_MS = 1500;
+let backgroundRefresh: ReturnType<typeof setTimeout> | undefined;
+
+function refreshIfGlobalsChanged(before: string, changedUri: string): void {
+  if (globalTypesSignature(symbolTable) === before) return;
+  for (const doc of documents.all()) if (doc.uri !== changedUri) publishDiagnostics(doc);
+  if (backgroundRefresh) clearTimeout(backgroundRefresh);
+  backgroundRefresh = setTimeout(() => {
+    backgroundRefresh = undefined;
+    for (const uri of backgroundDiagnosticUris) {
+      if (documents.get(uri)) continue;
+      const text = symbolTable.getText(uri);
+      if (text !== undefined) publishDiagnosticsForText(uri, text);
+    }
+  }, BACKGROUND_REFRESH_DELAY_MS);
 }
 
 // ── All-docs helper ───────────────────────────────────────────────────────────

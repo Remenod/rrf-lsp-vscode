@@ -154,10 +154,26 @@ export function typeDiagnostics(st: SymbolTable, uri: string, text: string, rrfV
 
 /** Inferred type of the var./global./param. reference (or `var` name) starting at line:col. */
 export function typeAtPosition(st: SymbolTable, uri: string, docLines: string[], line: number, col: number): Ty | undefined {
-    return analyse(st, uri, docLines.join('\n'), null).types.get(line)?.get(col);
+    // Reuse the indexed text when it is the same document (it may use CRLF line ends).
+    const indexed = st.getText(uri);
+    const same = indexed !== undefined && sameLines(indexed.split(/\r?\n/), docLines);
+    return analyse(st, uri, same ? indexed! : docLines.join('\n'), null).types.get(line)?.get(col);
+}
+
+function sameLines(a: string[], b: string[]): boolean {
+    return a.length === b.length && a.every((l, i) => l === b[i]);
 }
 
 /** Workspace type of `global.<name>`. */
 export function globalType(st: SymbolTable, name: string): Ty {
     return solveGlobals(st, cacheFor(st)).get(name) ?? UNKNOWN;
+}
+
+/**
+ * Identity of the current workspace global types. When it changes, diagnostics
+ * of other documents may change too (a global gained or lost a type).
+ */
+export function globalTypesSignature(st: SymbolTable): string {
+    const types = solveGlobals(st, cacheFor(st));
+    return [...types].map(([n, t]) => `${n}=${key(t)}`).sort().join(';');
 }
