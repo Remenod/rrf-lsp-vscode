@@ -125,3 +125,13 @@ export function describe(t: Ty): string {
     if (t === 'unknown' || t.length === 0) return 'unknown';
     return t.map(a => (typeof a === 'string' ? a : (a.elem === 'unknown' ? 'array' : `array<${describe(a.elem)}>`))).join(' | ');
 }
+
+/** Coarse display for completion details: like `display`, with every array shown as `array`. */
+export function coarse(t: Ty): string {
+    if (t === 'unknown' || t.length === 0) return 'unknown';
+    const prims = t.filter((a): a is Prim => typeof a === 'string');
+    const shown = display(prims.length ? prims : BOTTOM);
+    const parts = prims.length ? [shown] : [];
+    if (t.some(a => typeof a !== 'string')) parts.push('array');
+    return parts.join(' | ');
+}

@@ -120,8 +120,7 @@ describe('symbols: inferred types of initialisers', () => {
   ];
   for (const [init, want] of exact) it(`${init} -> ${want}`, () => assert.equal(typeOf(init), want));
 
-  // The inference only looks at the first token of the initialiser. Everything below
-  // is what a correct type checker must report (RRF: ExpressionParser.cpp).
+  // The whole initialiser is typed (RRF: ExpressionParser.cpp), on its own: no flow.
   const correct: Array<[string, string, string]> = [
     ['-1', 'int', 'unary minus keeps the operand type'],
     ['-1.5', 'float', 'unary minus keeps the operand type'],
@@ -148,14 +147,16 @@ describe('symbols: inferred types of initialisers', () => {
     ['isnan(1)', 'bool', 'isnan returns bool'],
     ['mod(7, 2)', 'int', 'int mod int'],
     ['max(1, 2.5)', 'float', 'max balances numeric types'],
+    ['move.axes[0].min', 'number', 'object-model numbers are int | uint | float'],
   ];
   for (const [init, want, why] of correct) {
-    it(`${init} -> ${want} (${why})`, { todo: 'inference only inspects the first token' }, () => {
+    it(`${init} -> ${want} (${why})`, () => {
       assert.equal(typeOf(init), want);
     });
   }
 
   it('unknown stays "unknown" rather than guessing', () => {
-    assert.equal(typeOf('move.axes[0].min'), 'unknown');
+    assert.equal(typeOf('state.vmFeatureLevel'), 'unknown');
+    assert.equal(typeOf('var.other + 1'), 'unknown');
   });
 });

@@ -3,6 +3,9 @@
 import { Token, TokenType } from '../parser/types';
 import { Lexer } from '../parser/lexer';
 import { lineIndent } from './utils';
+import { parseExpression } from './typecheck/ast';
+import { Typer } from './typecheck/infer';
+import { UNKNOWN, coarse } from './typecheck/types';
 
 export type VarScope = 'var' | 'global' | 'param';
 
@@ -13,7 +16,8 @@ export interface VariableDecl {
     line: number;
     col: number;
     indent: number;
-    inferredType?: string;   // 'int' | 'float' | 'bool' | 'string' | 'array' | 'unknown'
+    /** Type of the initialiser on its own (no flow): 'int', 'float', 'int | string', 'array', 'unknown', … */
+    inferredType?: string;
 }
 
 export class SymbolTable {
@@ -95,7 +99,7 @@ export class SymbolTable {
                     line: i,
                     col: nameTok.start,
                     indent,
-                    inferredType: inferTypeFromTokens(tokens, 3),
+                    inferredType: inferTypeFromTokens(tokens, 3, line),
                 };
                 const list = localMap.get(nameTok.value) ?? [];
                 list.push(decl);
@@ -112,7 +116,7 @@ export class SymbolTable {
                     line: i,
                     col: nameTok.start,
                     indent,
-                    inferredType: inferTypeFromTokens(tokens, 3),
+                    inferredType: inferTypeFromTokens(tokens, 3, line),
                 };
                 const existing = this.globals.get(nameTok.value) ?? [];
                 existing.push(decl);
@@ -327,21 +331,14 @@ export class SymbolTable {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function inferTypeFromTokens(tokens: Token[], startIdx: number): string {
-    const t = tokens[startIdx];
-    if (!t || t.type === TokenType.EOF) return 'unknown';
-
-    switch (t.type) {
-        case TokenType.Integer:
-        case TokenType.HexInteger:
-        case TokenType.BinInteger: return 'int';
-        case TokenType.Float: return 'float';
-        case TokenType.StringLit: return 'string';
-        case TokenType.CharLit: return 'char';
-        case TokenType.True:
-        case TokenType.False: return 'bool';
-        case TokenType.LBracket:
-        case TokenType.LBrace: return 'array';
-        default: return 'unknown';
-    }
+/**
+ * Type of an initialiser taken on its own: references to other variables are
+ * `unknown` here (hover shows the flow-sensitive type instead).
+ */
+function inferTypeFromTokens(tokens: Token[], startIdx: number, lineText: string): string {
+    const node = parseExpression(tokens.slice(startIdx));
+    if (!node) return 'unknown';
+    const r = new Typer({ line: 0, lineText, version: null, report: null, record: null })
+        .infer(node, { local: () => undefined, global: () => UNKNOWN });
+    return r.failed ? 'unknown' : coarse(r.t);
 }
