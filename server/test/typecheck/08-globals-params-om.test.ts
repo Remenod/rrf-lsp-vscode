@@ -168,8 +168,8 @@ describe('TC-PRM-01: macro parameters', () => {
     expectType(typeOfExpr('param.S'), 'unknown', 'param');
     expectType(typeOfExpr('exists(param.S)'), 'bool', 'exists(param)');
   });
-  guard('TC-PRM-01', 'nothing involving a param is ever reported', () => {
-    for (const e of ['param.A + "x"', 'param.A && true', '-param.A', 'abs(param.A)', 'vector(param.N, 0)', '#param.A', 'param.A == 1', 'param.A[0]'])
+  guard('TC-PRM-01', 'a param works wherever some type would', () => {
+    for (const e of ['param.A + 1', 'param.A && true', '-param.A', 'abs(param.A)', 'vector(param.N, 0)', '#param.A', 'param.A == 1', 'param.A[0]'])
       expectNoTypes(`echo ${e}`);
     expectNoTypes('if param.A\n  echo 1');
   });
@@ -204,7 +204,7 @@ describe('TC-OM: object-model values', () => {
       expectNoTypes(`echo ${e}`);
   });
   guard('TC-OM-02', 'paths outside the model are unknown', () => {
-    for (const e of ['state.noSuchField + "x"', 'state.noSuchField && true', 'boards[0].noSuchField * 2'])
+    for (const e of ['state.noSuchField - 1', 'state.noSuchField && true', 'boards[0].noSuchField * 2'])
       expectNoTypes(`echo ${e}`);
   });
   rule('TC-OM-02', 'and hover says so', () => expectType(typeOfExpr('state.noSuchField'), 'unknown', 'not in the model'));

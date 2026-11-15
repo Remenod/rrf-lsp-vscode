@@ -360,8 +360,9 @@ class Walker {
             case TokenType.Var: {
                 const d = declaration(s);
                 if (!d) return env;
-                const r = d.expr ? this.infer(s, d.expr, env, ctx) : { t: UNKNOWN };
-                const t = r.failed ? UNKNOWN : r.t;
+                // A declaration whose value fails stops the macro there: later lines see no value.
+                const r = d.expr ? this.infer(s, d.expr, env, ctx) : null;
+                const t = !r || r.failed ? BOTTOM : r.t;
                 const out = clone(env);
                 out.vars.set(d.name, t);
                 if (!ctx.silent && this.opts.record) this.recordType(s.line, d.nameTok.start, t);
@@ -407,12 +408,16 @@ class Walker {
     private assign(s: Stmt, env: Env, ctx: Ctx): Flow {
         const a = assignment(s);
         if (!a) return env;
-        const r = a.expr ? this.infer(s, a.expr, env, ctx) : { t: UNKNOWN };
-        const t = r.failed ? UNKNOWN : r.t;
+        const r = a.expr ? this.infer(s, a.expr, env, ctx) : null;
+        // A failing value stops the macro at this line: for later lines of this file there is no
+        // value (bottom); for the workspace type of a global it is simply not known.
+        const dead = !r || r.failed;
+        const t = dead ? UNKNOWN : r.t;
+        const local = dead ? BOTTOM : r.t;
         const out = clone(env);
         if (a.indexes.length === 0) {
             if (a.scope === 'var') {
-                if (out.vars.has(a.name)) out.vars.set(a.name, t);
+                if (out.vars.has(a.name)) out.vars.set(a.name, local);
             } else {
                 out.globals.delete(a.name);
                 this.opts.contribute?.({ name: a.name, kind: 'assign', depth: 0, t });
@@ -441,7 +446,7 @@ class Walker {
             }
         }
         if (a.scope === 'var') {
-            if (current !== undefined) out.vars.set(a.name, widenElements(current, a.indexes.length, t));
+            if (current !== undefined) out.vars.set(a.name, widenElements(current, a.indexes.length, local));
         } else {
             this.opts.contribute?.({ name: a.name, kind: 'elem', depth: a.indexes.length, t });
         }

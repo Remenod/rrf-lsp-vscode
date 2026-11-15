@@ -46,17 +46,22 @@ disagree, the source wins.
   * function argument: that argument expression; index: the index expression, or the subscripted
     variable for "not an array";
   * `rrf-version`: the function name / constant token.
-- `TC-DIAG-05` — one diagnostic per root cause. A sub-expression that has a type error has
-  type `unknown` for its parents: `("a" + 1) * 2` yields exactly one diagnostic.
+- `TC-DIAG-05` — one diagnostic per root cause. Parents of a sub-expression that has a type error
+  stay silent: `("a" + 1) * 2` yields exactly one diagnostic. A variable whose declaration or
+  assignment fails has no value on later lines (the macro stops there), so `var x = "a" + 1`
+  followed by `echo var.x + "b"` is one diagnostic. Constructs the checker cannot type (a wrong
+  number of arguments, an indexed function result) are silent too, not `unknown`.
 - `TC-DIAG-06` — a line that already has an Error from the syntax checks (lexer error, bracket,
   dangling operator, arity, `'#'` on a numeric literal, undefined variable, …) gets no type
   diagnostics.
-- `TC-DIAG-07` — values the server cannot see are `unknown`: macro parameters, undefined
-  variables, unknown object-model paths, unknown functions, variables only reachable under a dead
-  `exists()` guard.
+- `TC-DIAG-07` — values the server cannot see are `unknown`: macro parameters, `input`, undefined
+  globals, unknown object-model paths, results of unknown functions. A variable that is not in
+  scope (the syntax checks report it, or it is only reachable under a dead `exists()` guard) has
+  no value to check, and nothing about it is reported.
 - `TC-DIAG-08` — only definite errors are reported: an expression is reported only when every
-  combination of its operands' possible types fails in the firmware. An `unknown` operand, or
-  any combination that succeeds, means no diagnostic.
+  combination of its operands' possible types fails in the firmware. An `unknown` operand stands
+  for every type, so `"a" + param.X` is reported (it fails whatever `param.X` holds) and
+  `param.X + 1` is not. The message then says the unknown side does not matter.
 
 ## 2. Types
 
@@ -235,7 +240,7 @@ Which functions exist on which version is in §10.
 - `TC-FLOW-09` — null narrowing: inside `if X != null` / `elif X != null`, in the right
   operand of `X != null && …`, and in the true branch of `X != null ? … : …`, `null` is removed from
   the type of `X` (a variable or global); `== null` narrows the other way. If narrowing leaves no
-  type at all (the branch cannot run), `X` is `unknown` inside that branch, so uses of `X` there are
+  type at all (the branch cannot run), `X` has no value inside that branch, so uses of `X` there are
   not reported. Other code in the branch is still checked.
 
 ## 9. Evaluation and short-circuit

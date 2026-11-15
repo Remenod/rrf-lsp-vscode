@@ -106,6 +106,16 @@ describe('TC-DIAG: diagnostic shape', () => {
     expectTypes('echo -("a" + 1) + "b"', [{ code: CODE.operand, at: '"a" + 1' }]);
     expectTypes('if ("a" + 1) > 2\n  echo 1', [{ code: CODE.operand, at: '"a" + 1' }]);
   });
+  rule('TC-DIAG-05', 'a failed element, declaration or assignment adds nothing later', () => {
+    expectTypes('echo {1, "a" + 1}[0] + "b"', [{ code: CODE.operand, at: '"a" + 1' }]);
+    expectTypes(src('var x = "a" + 1', 'echo var.x + "b"', 'echo -var.x'), [{ code: CODE.operand, at: '"a" + 1', line: 0 }]);
+    expectTypes(src('var y = 1', 'set var.y = "a" + 1', 'echo var.y + "b"'), [{ code: CODE.operand, at: '"a" + 1', line: 1 }]);
+    expectTypes(src('var a = {1, 2}', 'set var.a[0] = "a" + 1', 'echo var.a[0] * 2'), [{ code: CODE.operand, at: '"a" + 1', line: 1 }]);
+  });
+  guard('TC-DIAG-05', 'what the checker cannot type is not treated as an unknown value', () => {
+    for (const t of ['echo abs(1, 2) + "a"', 'echo max() + "a"', 'echo abs(1)[0] + "a"', 'echo [1, 2] + "a"', 'echo (move.axes[0]).homed + "a"'])
+      expectNoTypes(t);
+  });
   rule('TC-DIAG-05', 'independent errors on one line are all reported', () => {
     expectTypes('echo "a" + 1, true * 2', [
       { code: CODE.operand, at: '"a" + 1' },
@@ -125,16 +135,43 @@ describe('TC-DIAG: diagnostic shape', () => {
     ]) expectNoTypes(t);
   });
 
-  guard('TC-DIAG-07', 'values the server cannot see are unknown and never reported', () => {
+  guard('TC-DIAG-07', 'values the server cannot see are unknown: whatever works for some value is not reported', () => {
     for (const t of [
-      'echo foo(1) + "a"',
-      'echo state.noSuchField + "a"',
+      'echo foo(1) * 2',
+      'echo state.noSuchField + 1',
       'echo nonsense.path * 2',
-      'if exists(var.never)\n  echo var.never + "a"',
-      'echo global.notDeclaredAnywhere + "a"',
-      'echo param.A + "a"',
-      'echo input + "a"',
+      'echo global.notDeclaredAnywhere == "a"',
+      'echo param.A - 1',
+      'echo input < 3',
     ]) expectNoTypes(t);
+  });
+
+  guard('TC-DIAG-07', 'code under a dead exists() guard is not checked through the missing variable', () => {
+    expectNoTypes('if exists(var.never)\n  echo var.never + "a"');
+  });
+
+  rule('TC-DIAG-08', 'an unknown operand stands for every type: what fails for all of them is reported', () => {
+    for (const [t, at] of [
+      ['echo state.noSuchField + "a"', 'state.noSuchField + "a"'],
+      ['echo global.notDeclaredAnywhere + "a"', 'global.notDeclaredAnywhere + "a"'],
+      ['echo param.A + "a"', 'param.A + "a"'],
+      ['echo input + "a"', 'input + "a"'],
+      ['echo "Left=" + param.T', '"Left=" + param.T'],
+      ['echo true * param.A', 'true * param.A'],
+      ['echo param.A + datetime(0)', 'param.A + datetime(0)'],
+      ['if "abc" < param.A\n  echo 1', '"abc" < param.A'],
+    ] as const) expectTypes(t, [{ code: CODE.operand, at }]);
+  });
+
+  rule('TC-DIAG-08', 'the message says the unknown side does not matter and suggests ^ for strings', () => {
+    const ds = typeDiags('echo "Left=" + param.T');
+    assert.equal(ds.length, 1);
+    assert.match(ds[0].message, /cannot be applied to string, whatever the right operand is: the firmware stops with "expected numeric operands" — use '\^' to join strings/);
+  });
+
+  guard('TC-DIAG-08', 'an unknown operand that works for some type is not reported', () => {
+    for (const e of ['param.A + 1', 'param.A ^ "a"', 'param.A == "a"', 'param.A < 1', 'param.A - datetime(0)', 'param.A && true', '-param.A', '#param.A'])
+      expectNoTypes(`echo ${e}`);
   });
 
   guard('TC-DIAG-08', 'a union operand with one succeeding member is not reported', () => {

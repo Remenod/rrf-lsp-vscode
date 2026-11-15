@@ -101,6 +101,11 @@ export interface R {
     failed?: boolean;
 }
 
+/**
+ * The checker has nothing to say about this value: an error was already reported, or it cannot
+ * type the construct. Parents stay silent. Distinct from an `unknown` run-time value, which
+ * TC-DIAG-08 treats as every type.
+ */
 const FAILED: R = { t: UNKNOWN, failed: true };
 
 // ── Narrowing (TC-FLOW-09) ──────────────────────────────────────────────────
@@ -124,10 +129,10 @@ export function narrowFacts(n: Node, truthy: boolean): NarrowFact[] {
     return [{ key: subject.name, toNull: equalsNull === truthy }];
 }
 
+/** Narrow `t` to null or non-null; nothing left means the branch cannot run (bottom, never reported). */
 export function applyFact(t: Ty, toNull: boolean): Ty {
     if (isUnknown(t)) return t;
-    const out = t.filter(a => (a === 'null') === toNull);
-    return out.length === 0 ? UNKNOWN : out;
+    return t.filter(a => (a === 'null') === toNull);
 }
 
 export function narrowScope(scope: Scope, facts: NarrowFact[]): Scope {
@@ -222,17 +227,26 @@ function kinds(t: Ty): Kind[] {
     return [...new Set(atoms(t).map(kindOf))];
 }
 
-/** Every combination of the operand kinds: the union of successes, or the first error. */
+/** Every kind a value can have at run time: what an `unknown` operand stands for (TC-DIAG-08). */
+const ALL_KINDS: readonly Kind[] = ['int', 'uint', 'float', 'bool', 'string', 'char', 'datetime', 'object', 'null', 'array'];
+
+/**
+ * Every combination of the operand kinds: the union of successes, or the first
+ * error when no combination succeeds. An unknown operand ranges over every kind,
+ * so `"a" + param.X` fails whatever the parameter holds.
+ */
 function combine(op: BinOp, l: Ty, r: Ty): AR {
-    if (isUnknown(l) || isUnknown(r)) return { ok: fixedResult(op) };
-    if (isBottom(l) || isBottom(r)) return { ok: BOTTOM };
+    const lu = isUnknown(l), ru = isUnknown(r);
+    if (lu && ru) return { ok: fixedResult(op) };
+    if ((!lu && isBottom(l)) || (!ru && isBottom(r))) return { ok: lu || ru ? fixedResult(op) : BOTTOM };
     const oks: Ty[] = [];
     let first: string | undefined;
-    for (const a of kinds(l)) for (const b of kinds(r)) {
+    for (const a of lu ? ALL_KINDS : kinds(l)) for (const b of ru ? ALL_KINDS : kinds(r)) {
         const res = binaryKinds(op, a, b);
         if ('ok' in res) oks.push(res.ok); else first ??= res.err;
     }
-    return oks.length ? { ok: union(...oks) } : { err: first! };
+    if (oks.length === 0) return { err: first! };
+    return { ok: lu || ru ? fixedResult(op) : union(...oks) };
 }
 
 function unaryKind(op: '-' | '+' | '!' | '#', k: Kind): AR {
@@ -326,12 +340,13 @@ export class Typer {
             case 'str': return { t: prim('string'), v: { str: n.text } };
             case 'char': return { t: prim('char') };
             case 'const': return this.constant(n);
-            case 'opaque': return { t: UNKNOWN };
+            case 'opaque': return FAILED;
             case 'paren': return this.infer(n.e, scope, mode);
             case 'brace': {
                 const items = n.items.map(i => this.infer(i, scope, mode));
                 if (!n.array) return items[0];
-                const elem = items.some(i => i.failed) ? UNKNOWN : union(...items.map(i => i.t));
+                if (items.some(i => i.failed)) return FAILED;
+                const elem = union(...items.map(i => i.t));
                 return { t: arrayOf(elem, true, items.length) };
             }
             case 'ident': return this.ident(n, scope);
@@ -357,7 +372,9 @@ export class Typer {
 
     private ident(n: Node & { k: 'ident' }, scope: Scope): R {
         let t: Ty;
-        if (n.name.startsWith('var.')) t = scope.local(n.name.slice(4)) ?? UNKNOWN;
+        // A variable not in scope here: the line cannot run (dead exists() guard) or the syntax checks
+        // already report it, so it has no value to check (bottom).
+        if (n.name.startsWith('var.')) t = scope.local(n.name.slice(4)) ?? BOTTOM;
         else if (n.name.startsWith('global.')) t = scope.global(n.name.slice(7));
         else if (n.name.startsWith('param.')) t = UNKNOWN;
         else return { t: omType(n.name) };
@@ -369,7 +386,7 @@ export class Typer {
         const base = this.infer(n.base, scope, mode);
         if (base.failed) return FAILED;
         const path = omPath(n);
-        return { t: path === null ? UNKNOWN : omType(path) };
+        return path === null ? FAILED : { t: omType(path) };
     }
 
     private requireInt(idx: R, at: Node, mode: Mode, text: string): boolean {
@@ -384,7 +401,7 @@ export class Typer {
         // A bracketed expression: `{1, 2}[0]`, `(var.a)[0]`, `("abc")[0]`.
         const base = this.infer(n.base, scope, mode);
         const idx = this.infer(n.index, scope, mode);
-        if (n.base.k === 'call') return { t: UNKNOWN };   // the firmware cannot index a function result
+        if (n.base.k === 'call') return FAILED;   // the firmware cannot index a function result (a syntax error)
         if (!this.requireInt(idx, n.index, mode, MSG.nonNegativeInt)) return FAILED;
         if (idx.v && 'num' in idx.v && idx.v.num < 0) {
             return this.fail(mode, CODE.value, n.index.s, `negative index ${idx.v.num}: the firmware stops with "${MSG.nonNegativeInt}"`);
@@ -419,7 +436,7 @@ export class Typer {
             // Object-model collection.
             if (base.failed || idx.failed) return FAILED;
             const path = omPath(n);
-            return { t: path === null ? UNKNOWN : omType(path) };
+            return path === null ? FAILED : { t: omType(path) };
         }
         if (idx.v && 'num' in idx.v && idx.v.num < 0) {
             return this.fail(mode, CODE.value, n.index.s, `negative index ${idx.v.num}: the firmware stops with "${MSG.indexRange}"`);
@@ -431,7 +448,7 @@ export class Typer {
                 `'${root.name}' holds ${describe(base.t)}, not an array: the firmware stops with ` +
                 `"Cannot index into variable or parameter '${name}' of non-array type"`);
         }
-        if (idx.v && 'num' in idx.v && !isUnknown(base.t)) {
+        if (idx.v && 'num' in idx.v && !isUnknown(base.t) && !isBottom(base.t)) {
             const arrays = base.t.filter(a => typeof a !== 'string') as Exclude<Atom, string>[];
             if (arrays.length === base.t.length && arrays.every(a => a.len !== undefined && idx.v && 'num' in idx.v && idx.v.num >= a.len)) {
                 return this.fail(mode, CODE.value, n.index.s,
@@ -513,9 +530,13 @@ export class Typer {
         if (l.failed || r.failed) return FAILED;
         const res = combine(n.op, l.t, r.t);
         if ('err' in res) {
-            const hint = n.op === '+' && hasKind(l.t, 'string') && hasKind(r.t, 'string') ? ` — use '^' to join strings` : '';
+            const joins = (a: Ty, b: Ty) => hasKind(a, 'string') && (hasKind(b, 'string') || isUnknown(b));
+            const hint = n.op === '+' && (joins(l.t, r.t) || joins(r.t, l.t)) ? ` — use '^' to join strings` : '';
+            const operands = isUnknown(l.t) ? `${describe(r.t)}, whatever the left operand is`
+                : isUnknown(r.t) ? `${describe(l.t)}, whatever the right operand is`
+                    : `${describe(l.t)} and ${describe(r.t)}`;
             return this.fail(mode, CODE.operand, n.s,
-                `'${n.op}' cannot be applied to ${describe(l.t)} and ${describe(r.t)}: the firmware stops with "${res.err}"${hint}`);
+                `'${n.op}' cannot be applied to ${operands}: the firmware stops with "${res.err}"${hint}`);
         }
         return { t: res.ok };
     }
@@ -609,7 +630,7 @@ class Builtin {
         const { n, args } = this;
         const name = n.name;
         const want = ARITY[name];
-        if (want !== undefined && args.length !== want) return { t: UNKNOWN };
+        if (want !== undefined && args.length !== want) return FAILED;
         if (name === 'max' || name === 'min') return this.maxMin();
         if (FLOAT_FUNCTIONS.has(name)) return this.numeric([0], prim('float'));
         switch (name) {
@@ -718,7 +739,7 @@ class Builtin {
 
     private maxMin(): R {
         const { args, n } = this;
-        if (args.length === 0) return { t: UNKNOWN };
+        if (args.length === 0) return FAILED;
         if (args.length > 1) return this.balanced();
         const a = args[0];
         if (a.failed) return FAILED;
