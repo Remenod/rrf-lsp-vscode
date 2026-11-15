@@ -113,8 +113,9 @@ describe('TC-ARR-09: object-model arrays', () => {
   });
   rule('TC-ARR-09', 'element types', () => {
     expectType(typeOfExpr('move.axes[0]'), 'object', 'element with fields');
-    expectType(typeOfExpr('tools[0].offsets[0]'), 'unknown', 'element without known fields');
-    expectType(typeOfExpr('move.axes[0].letter'), 'string', 'field of element');
+    expectType(typeOfExpr('tools[0].offsets[0]'), 'float', 'element typed by the firmware');
+    expectType(typeOfExpr('move.kinematics.anchors[0]'), 'unknown', 'element the firmware tables do not type');
+    expectType(typeOfExpr('move.axes[0].letter'), 'char', 'field of element');
   });
   guard('TC-ARR-09', 'index expressions from the object model are fine', () => {
     expectNoTypes('echo tools[state.currentTool].name\necho move.axes[#move.axes - 1].homed');

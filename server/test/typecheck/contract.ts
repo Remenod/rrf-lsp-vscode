@@ -41,6 +41,7 @@ export function guard(id: string, title: string, fn: () => void): void {
 
 export interface TcOptions {
   rrfVersion?: string;
+  sbc?: boolean;
   extraDocs?: Record<string, string>;
   file?: string;
   maxLineLength?: number;

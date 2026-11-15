@@ -197,7 +197,11 @@ let argCheckConfig: ArgCheckConfig = defaultArgCheckConfig();
 let maxLineLength = DEFAULT_MAX_LINE_LENGTH;
 let typeCheckEnabled = true;
 let rrfVersion = '';
+let sbc = false;
 let configLoaded = false;
+
+/** Firmware line and SBC setting for object-model paths and types. */
+const omTarget = () => ({ version: rrfVersion, sbc });
 
 function normaliseMaxLineLength(raw: unknown): number {
   if (typeof raw === 'number' && Number.isFinite(raw) && raw >= 0) return Math.floor(raw);
@@ -206,21 +210,24 @@ function normaliseMaxLineLength(raw: unknown): number {
 
 async function refreshConfig(): Promise<void> {
   try {
-    const [argRaw, maxRaw, typeCheckRaw, versionRaw] = await Promise.all([
+    const [argRaw, maxRaw, typeCheckRaw, versionRaw, sbcRaw] = await Promise.all([
       connection.workspace.getConfiguration('rrfgcode.argCheck'),
       connection.workspace.getConfiguration('rrfgcode.maxLineLength'),
       connection.workspace.getConfiguration('rrfgcode.typeCheck'),
       connection.workspace.getConfiguration('rrfgcode.rrfVersion'),
+      connection.workspace.getConfiguration('rrfgcode.sbc'),
     ]);
     argCheckConfig = normaliseArgCheckConfig(argRaw);
     maxLineLength = normaliseMaxLineLength(maxRaw);
     typeCheckEnabled = (typeCheckRaw as { enabled?: unknown } | null)?.enabled !== false;
     rrfVersion = typeof versionRaw === 'string' ? versionRaw : '';
+    sbc = sbcRaw === true;
   } catch {
     argCheckConfig = defaultArgCheckConfig();
     maxLineLength = DEFAULT_MAX_LINE_LENGTH;
     typeCheckEnabled = true;
     rrfVersion = '';
+    sbc = false;
   }
   configLoaded = true;
 }
@@ -436,7 +443,7 @@ function publishDiagnosticsForText(uri: string, text: string): void {
   connection.sendDiagnostics({
     uri,
     diagnostics: computeDiagnostics(uri, text, {
-      symbolTable, argCheckConfig, maxLineLength, typeCheck: { enabled: typeCheckEnabled }, rrfVersion,
+      symbolTable, argCheckConfig, maxLineLength, typeCheck: { enabled: typeCheckEnabled }, rrfVersion, sbc,
     }),
   });
 }
@@ -464,6 +471,7 @@ connection.onHover((params: HoverParams): Hover | null => {
     params.textDocument.uri,
     lineIndent(line),
     lines,
+    omTarget(),
   );
 });
 
@@ -822,7 +830,7 @@ connection.onCompletion((params: CompletionParams): CompletionItem[] => {
     const items: CompletionItem[] = [];
     const seen = new Set<string>();
 
-    for (const info of allOmPaths()) {
+    for (const info of allOmPaths(omTarget())) {
       if (!info.path.startsWith(omPrefixWithDot)) continue;
       const rest = info.path.slice(omPrefixWithDot.length);
       const segment = rest.split('.')[0].replace(/\[\]$/, '');
@@ -832,7 +840,7 @@ connection.onCompletion((params: CompletionParams): CompletionItem[] => {
         label: segment,
         insertText: segment,
         kind: info.isArray ? CompletionItemKind.Field : CompletionItemKind.Property,
-        detail: `${omPrefixWithDot}${segment}${info.isArray ? '[]' : ''} (${info.type})`,
+        detail: `${omPrefixWithDot}${segment}${info.isArray ? '[]' : ''} (${info.type.split('|').join(' | ')})`,
       });
     }
     if (items.length > 0) return items;
@@ -901,7 +909,7 @@ connection.onCompletion((params: CompletionParams): CompletionItem[] => {
   }
   if (isOmIndexAvailable()) {
     const seen = new Set<string>();
-    for (const info of allOmPaths()) {
+    for (const info of allOmPaths(omTarget())) {
       const top = info.path.split('.')[0];
       if (seen.has(top)) continue;
       seen.add(top);

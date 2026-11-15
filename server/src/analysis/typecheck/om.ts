@@ -1,66 +1,50 @@
 // analysis/typecheck/om.ts
-// Object-model leaf types (SPEC TC-OM-01/02, TC-ARR-09), from the index built
-// out of @duet3d/objectmodel.  The library types every number as `number`, so
-// numbers are `int | uint | float`; leaves whose default is null carry no type
-// information and are `unknown`.
+// Object-model leaf types (SPEC TC-OM-01/02, TC-ARR-09), from the data generated from the
+// firmware's object-model tables (objectModelIndex). A bitmap reads as an int bit mask, and
+// indexing it gives the number of a set bit, also an int; `unknown` kinds stay unknown.
 
-import { allOmPaths, getOmPathInfo, isOmIndexAvailable } from '../objectModelIndex';
-import { Ty, UNKNOWN, NUMBER, prim, arrayOf } from './types';
+import { getOmPathInfo, isOmIndexAvailable, OmTarget } from '../objectModelIndex';
+import { Ty, UNKNOWN, prim, arrayOf, union, Prim } from './types';
 
-let elementPrefixes: Set<string> | null = null;
+const PRIMS: Record<string, Prim> = {
+    int: 'int', uint: 'uint', float: 'float', bool: 'bool', string: 'string', char: 'char',
+    datetime: 'datetime', object: 'object', null: 'null', bitmap: 'int',
+};
 
-/** Normalised paths of collections whose elements have fields (`move.axes[]`). */
-function hasFields(elementPath: string): boolean {
-    if (!elementPrefixes) {
-        elementPrefixes = new Set();
-        for (const { path } of allOmPaths()) {
-            let i = path.indexOf('[].');
-            while (i >= 0) {
-                elementPrefixes.add(path.slice(0, i + 2));
-                i = path.indexOf('[].', i + 1);
-            }
-        }
-    }
-    return elementPrefixes.has(elementPath);
+function toTy(type: string, path: string, target: OmTarget | undefined): Ty {
+    const kinds = type.split('|');
+    if (kinds.includes('unknown')) return UNKNOWN;
+    return union(...kinds.map(k => (k === 'array' ? arrayOf(element(path, target), false) : PRIMS[k] ? prim(PRIMS[k]) : UNKNOWN)));
 }
 
-function elementType(collection: string): Ty {
-    const element = `${collection}[]`;
-    const info = getOmPathInfo(element);
-    if (info) return leaf(info.type, info.isArray, element);
-    return hasFields(element) ? prim('object') : UNKNOWN;
+function element(collection: string, target: OmTarget | undefined): Ty {
+    const info = getOmPathInfo(`${collection}[]`, target);
+    return info ? toTy(info.type, `${collection}[]`, target) : UNKNOWN;
 }
 
-function leaf(type: string, isArray: boolean, path: string): Ty {
-    if (isArray) return arrayOf(elementType(path), false);
-    switch (type) {
-        case 'boolean': return prim('bool');
-        case 'string': return prim('string');
-        case 'number': return NUMBER;
-        case 'null': return UNKNOWN;
-        case 'array': return arrayOf(UNKNOWN, false);
-        case 'Date': return UNKNOWN;
-        case 'undefined': case 'function': case 'bigint': case 'symbol': return UNKNOWN;
-        default: return prim('object');
-    }
-}
+const caches = new Map<string, Map<string, Ty>>();
 
-const cache = new Map<string, Ty>();
-
-/** Type of a normalised object-model path (`move.axes[].homed`); unknown paths are `unknown`. */
-export function omType(path: string): Ty {
+/** Type of an object-model path (`move.axes[0].homed`); paths not in the model are `unknown`. */
+export function omType(path: string, target?: OmTarget): Ty {
     if (!isOmIndexAvailable()) return UNKNOWN;
-    const norm = path.replace(/\[\d*\]/g, '[]');
+    const key = `${target?.version ?? ''}|${target?.sbc ? 1 : 0}`;
+    let cache = caches.get(key);
+    if (!cache) caches.set(key, cache = new Map());
+    const norm = path.replace(/\[[^\]]*\]/g, '[]');
     const hit = cache.get(norm);
     if (hit) return hit;
-    let t: Ty;
+    let t: Ty = UNKNOWN;
     if (norm.endsWith('[]')) {
         const collection = norm.slice(0, -2);
-        const info = getOmPathInfo(collection);
-        t = info?.isArray ? elementType(collection) : UNKNOWN;
+        const info = getOmPathInfo(collection, target);
+        if (info) {
+            const kinds = info.type.split('|').filter(k => k !== 'null');
+            if (kinds.length === 1 && kinds[0] === 'bitmap') t = prim('int');
+            else if (kinds.includes('array')) t = element(collection, target);
+        }
     } else {
-        const info = getOmPathInfo(norm);
-        t = info ? leaf(info.type, info.isArray, norm) : UNKNOWN;
+        const info = getOmPathInfo(norm, target);
+        if (info) t = toTy(info.type, norm, target);
     }
     cache.set(norm, t);
     return t;

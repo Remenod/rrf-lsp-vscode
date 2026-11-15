@@ -188,6 +188,7 @@ export interface Contribution {
 
 export interface FlowOptions {
     version: Version | null;
+    sbc?: boolean;
     globals(name: string): Ty;
     report: boolean;
     record: boolean;
@@ -217,6 +218,7 @@ class Walker {
             line: s.line,
             lineText: s.text,
             version: this.opts.version,
+            sbc: this.opts.sbc,
             note,
             report: silent || !this.opts.report ? null : d => this.result.diagnostics.push(d),
             record: silent || !this.opts.record ? null : (col, t) => this.recordType(s.line, col, t),

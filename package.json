@@ -82,10 +82,20 @@
           "default": true,
           "markdownDescription": "Report expressions that RepRapFirmware would reject at runtime because of their types — `\"a\" + 1`, `if 1`, `abs(\"x\")`, indexing a number, and so on. Only definite errors are reported: when any possible type of an operand works, nothing is shown."
         },
+        "rrfgcode.sbc": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "The printer runs with a single-board computer (DuetSoftwareFramework). Its object-model fields (`sbc`, `plugins`, `job.layers`, …) are then known; without one they do not exist and are reported as unknown paths."
+        },
         "rrfgcode.rrfVersion": {
           "type": "string",
           "default": "",
-          "enum": ["", "3.5", "3.6", "3.7"],
+          "enum": [
+            "",
+            "3.5",
+            "3.6",
+            "3.7"
+          ],
           "enumDescriptions": [
             "No target: everything the newest firmware knows is accepted",
             "RepRapFirmware 3.5, latest release",
@@ -110,7 +120,6 @@
     "typescript": "^5.0.0"
   },
   "dependencies": {
-    "@duet3d/objectmodel": "^3.6.2",
     "vscode-languageserver": "^9.0.1",
     "vscode-languageserver-textdocument": "^1.0.12",
     "vscode-uri": "^3.1.0"

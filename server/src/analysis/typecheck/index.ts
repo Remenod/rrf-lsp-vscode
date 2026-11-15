@@ -134,22 +134,22 @@ function sameMap(a: Map<string, Ty>, b: Map<string, Ty>): boolean {
     return true;
 }
 
-function analyse(st: SymbolTable, uri: string, text: string, version: Version | null): FlowResult {
+function analyse(st: SymbolTable, uri: string, text: string, version: Version | null, sbc = false): FlowResult {
     const c = cacheFor(st);
     const globals = solveGlobals(st, c);
     const e = docFor(c, uri, text);
-    const k = version ?? '';
+    const k = `${version ?? ''}|${sbc ? 1 : 0}`;
     let r = e.results.get(k);
     if (!r) {
-        r = runFlow(e.doc, { version, globals: n => globals.get(n) ?? UNKNOWN, report: true, record: true });
+        r = runFlow(e.doc, { version, sbc, globals: n => globals.get(n) ?? UNKNOWN, report: true, record: true });
         e.results.set(k, r);
     }
     return r;
 }
 
 /** Type diagnostics of a document (unfiltered: the caller applies TC-DIAG-06). */
-export function typeDiagnostics(st: SymbolTable, uri: string, text: string, rrfVersion?: string): TypeDiag[] {
-    return analyse(st, uri, text, parseVersion(rrfVersion)).diagnostics;
+export function typeDiagnostics(st: SymbolTable, uri: string, text: string, rrfVersion?: string, sbc?: boolean): TypeDiag[] {
+    return analyse(st, uri, text, parseVersion(rrfVersion), sbc ?? false).diagnostics;
 }
 
 /** Inferred type of the var./global./param. reference (or `var` name) starting at line:col. */

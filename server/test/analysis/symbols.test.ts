@@ -147,7 +147,7 @@ describe('symbols: inferred types of initialisers', () => {
     ['isnan(1)', 'bool', 'isnan returns bool'],
     ['mod(7, 2)', 'int', 'int mod int'],
     ['max(1, 2.5)', 'float', 'max balances numeric types'],
-    ['move.axes[0].min', 'number', 'object-model numbers are int | uint | float'],
+    ['move.axes[0].min', 'float', 'object-model types come from the firmware tables'],
   ];
   for (const [init, want, why] of correct) {
     it(`${init} -> ${want} (${why})`, () => {

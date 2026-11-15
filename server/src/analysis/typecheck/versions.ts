@@ -1,7 +1,7 @@
 // analysis/typecheck/versions.ts
 // Target firmware line (`rrfgcode.rrfVersion`): 3.5, 3.6 or 3.7, each meaning its
 // latest release. The table comes from NamedEnum(Function, …) in
-// src/GCodes/GCodeBuffer/ExpressionParser.cpp of RepRapFirmware 3.5.4, 3.6.3 and 3.7.0.
+// src/GCodes/GCodeBuffer/ExpressionParser.cpp of RepRapFirmware 3.5.4, 3.6.4 and 3.7.0.
 
 export type Version = '3.5' | '3.6' | '3.7';
 

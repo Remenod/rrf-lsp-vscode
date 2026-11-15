@@ -84,6 +84,8 @@ export interface InferOptions {
     line: number;
     lineText: string;
     version: Version | null;
+    /** `rrfgcode.sbc`: the fields only a single-board computer provides exist too. */
+    sbc?: boolean;
     /** null: type silently (fixed-point passes, global solving). */
     report: ((d: TypeDiag) => void) | null;
     /** Called with the type of every var./global./param. reference, for hover. */
@@ -377,7 +379,7 @@ export class Typer {
         if (n.name.startsWith('var.')) t = scope.local(n.name.slice(4)) ?? BOTTOM;
         else if (n.name.startsWith('global.')) t = scope.global(n.name.slice(7));
         else if (n.name.startsWith('param.')) t = UNKNOWN;
-        else return { t: omType(n.name) };
+        else return { t: omType(n.name, { version: this.o.version, sbc: this.o.sbc }) };
         this.o.record?.(n.s.start, t);
         return { t };
     }
@@ -386,7 +388,7 @@ export class Typer {
         const base = this.infer(n.base, scope, mode);
         if (base.failed) return FAILED;
         const path = omPath(n);
-        return path === null ? FAILED : { t: omType(path) };
+        return path === null ? FAILED : { t: omType(path, { version: this.o.version, sbc: this.o.sbc }) };
     }
 
     private requireInt(idx: R, at: Node, mode: Mode, text: string): boolean {
@@ -436,7 +438,7 @@ export class Typer {
             // Object-model collection.
             if (base.failed || idx.failed) return FAILED;
             const path = omPath(n);
-            return path === null ? FAILED : { t: omType(path) };
+            return path === null ? FAILED : { t: omType(path, { version: this.o.version, sbc: this.o.sbc }) };
         }
         if (idx.v && 'num' in idx.v && idx.v.num < 0) {
             return this.fail(mode, CODE.value, n.index.s, `negative index ${idx.v.num}: the firmware stops with "${MSG.indexRange}"`);

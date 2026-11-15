@@ -205,7 +205,7 @@ describe('TC-TYPE: lattice and display', () => {
     const h = hoverText(src(`var t = ${H} ? 1 : "a"`, 'echo var.t'), 1, 'var.t') ?? '';
     assert.match(h, /Type: `[a-z<> |]+`/);
     expectType(typeAt(src(`var t = ${H} ? 1 : "a"`, 'echo var.t'), 1, 'var.t'), 'string | int', 'ternary');
-    expectType(typeOfExpr('heat.heaters[0].current'), 'number', 'OM number');
+    expectType(typeOfExpr('{1, 3000000000, 1.5}[0]'), 'number', 'int | uint | float shown as number');
   });
   rule('TC-TYPE-04', 'param hover shows Type: unknown', () => {
     expectType(typeAt('echo param.A', 0, 'param.A'), 'unknown', 'param');

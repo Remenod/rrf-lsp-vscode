@@ -23,6 +23,8 @@ export interface DiagnosticsOptions {
   typeCheck?: { enabled: boolean };
   /** Target firmware version (`rrfgcode.rrfVersion`); empty or omitted is version-neutral. */
   rrfVersion?: string;
+  /** `rrfgcode.sbc`: the object-model fields only a single-board computer provides exist too. */
+  sbc?: boolean;
 }
 
 function mkRange(sl: number, sc: number, el: number, ec: number): Range {
@@ -76,7 +78,8 @@ export function computeDiagnostics(uri: string, text: string, opts: DiagnosticsO
   const lines = text.split(/\r?\n/);
   const diagnostics: Diagnostic[] = [];
 
-  const omChecker = isOmIndexAvailable() ? isValidOmPath : undefined;
+  const omTarget = { version: opts.rrfVersion, sbc: opts.sbc };
+  const omChecker = isOmIndexAvailable() ? (p: string) => isValidOmPath(p, omTarget) : undefined;
 
   // Resolve the SD root once per document.  validateGCodeArgs reuses this
   // for every G/M/T line so we don't repeatedly walk the filesystem.
@@ -175,7 +178,7 @@ export function computeDiagnostics(uri: string, text: string, opts: DiagnosticsO
     // A line that already has an error gets no type diagnostics (TC-DIAG-06).
     const blocked = new Set<number>();
     for (const d of diagnostics) if (d.severity === DiagnosticSeverity.Error) blocked.add(d.range.start.line);
-    for (const d of typeDiagnostics(symbolTable, uri, text, opts.rrfVersion)) {
+    for (const d of typeDiagnostics(symbolTable, uri, text, opts.rrfVersion, opts.sbc)) {
       if (blocked.has(d.line)) continue;
       diagnostics.push({
         severity: d.severity === 'warning' ? DiagnosticSeverity.Warning : DiagnosticSeverity.Error,

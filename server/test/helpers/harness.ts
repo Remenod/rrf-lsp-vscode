@@ -61,6 +61,8 @@ export interface LintOptions {
   typeCheck?: boolean | 'omit';
   /** Extra documents to index into the symbol table (for cross-file globals). */
   extraDocs?: Record<string, string>;
+  /** `rrfgcode.sbc`: the object-model fields of a single-board computer exist. */
+  sbc?: boolean;
 }
 
 const VIRTUAL_URI = 'untitled:test.g';
@@ -84,6 +86,7 @@ export function lint(text: string, opts: LintOptions = {}): Diagnostic[] {
   };
   if (opts.typeCheck !== 'omit') o.typeCheck = { enabled: opts.typeCheck ?? false };
   if (opts.rrfVersion !== undefined) o.rrfVersion = opts.rrfVersion;
+  if (opts.sbc !== undefined) o.sbc = opts.sbc;
   return computeDiagnostics(uri, text, o as DiagnosticsOptions);
 }
 

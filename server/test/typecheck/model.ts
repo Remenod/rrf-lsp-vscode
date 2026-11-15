@@ -240,5 +240,5 @@ export function argLiteral(fn: string, t: Ty): string {
 
 // ── Version tables (upstream tags, NamedEnum(Function, …)) ───────────────────
 
-/** Functions RepRapFirmware 3.5 lacks; 3.6 and 3.7 have them (NamedEnum(Function, …) in 3.5.4, 3.6.3, 3.7.0). */
+/** Functions RepRapFirmware 3.5 lacks; 3.6 and 3.7 have them (NamedEnum(Function, …) in 3.5.4, 3.6.4, 3.7.0). */
 export const FUNCTIONS_FROM_3_6: readonly string[] = ['drop', 'find', 'round', 'square', 'take'];

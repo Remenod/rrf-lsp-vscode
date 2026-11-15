@@ -2,7 +2,7 @@
 
 import { describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { rule, guard, CODE, typeAt, expectType, expectTypes, expectNoTypes, typeOfExpr } from './contract';
+import { rule, guard, CODE, typeAt, expectType, expectTypes, expectNoTypes, typeOfExpr, lintTc } from './contract';
 import { MSG } from './model';
 import { src } from '../helpers/harness';
 import { WORKSPACE } from '../helpers/workspace';
@@ -179,16 +179,19 @@ describe('TC-OM: object-model values', () => {
   rule('TC-OM-01', 'leaf types from the model', () => {
     const rows: Array<[string, string]> = [
       ['move.axes[0].homed', 'bool'],
-      ['move.axes[0].letter', 'string'],
-      ['move.axes[0].max', 'number'],
-      ['move.axes[1].min', 'number'],          // a field named like a function
-      ['heat.heaters[0].current', 'number'],
+      ['move.axes[0].letter', 'char'],              // GetAxisLetters()[i]: one character
+      ['move.axes[0].max', 'float'],
+      ['move.axes[1].min', 'float'],           // a field named like a function
+      ['heat.heaters[0].current', 'float'],
       ['state.status', 'string'],
-      ['state.currentTool', 'number'],
+      ['state.currentTool', 'int'],
+      ['state.upTime', 'int'],
+      ['job.file.size', 'uint'],
       ['move.currentMove', 'object'],
       ['move.axes', 'array<object>'],
-      ['state.time', 'unknown'],               // null default: no type information
-      ['network.interfaces[0].actualIP', 'unknown'],
+      ['tools[0].offsets', 'array<float>'],
+      ['state.time', 'datetime'],
+      ['network.interfaces[0].actualIP', 'unknown'],   // an IP address: not a type the checker knows
     ];
     for (const [p, t] of rows) expectType(typeOfExpr(p), t, p);
   });
@@ -198,7 +201,7 @@ describe('TC-OM: object-model values', () => {
     expectTypes('echo heat.heaters[0].current + "C"', [{ code: CODE.operand, at: 'heat.heaters[0].current + "C"', firmware: /"expected numeric operands?"/ }]);
     expectTypes('if state.status\n  echo 1', [{ code: CODE.boolean, at: 'state.status' }]);
   });
-  guard('TC-OM-01', 'number = int | uint | float is never definite where one member works', () => {
+  guard('TC-OM-01', 'common uses of typed numbers are fine', () => {
     for (const e of ['-heat.heaters[0].current', 'abs(move.axes[0].max)', 'vector(state.currentTool, 0)', 'random(state.upTime)',
       'move.axes[state.currentTool]', 'move.axes[0].max + 1', 'move.axes[1].min < 5', 'state.currentTool == -1'])
       expectNoTypes(`echo ${e}`);
@@ -219,7 +222,8 @@ describe('TC-OM: object-model values', () => {
   });
   rule('TC-OM-05', '# directly before an object-model leaf returns the leaf unchanged', () => {
     expectType(typeOfExpr('#move.axes[0].homed'), 'bool', '#bool leaf');
-    expectType(typeOfExpr('#state.upTime'), 'number', '#number leaf');
+    expectType(typeOfExpr('#state.upTime'), 'int', '#int leaf');
+    expectType(typeOfExpr('#move.axes[0].max'), 'float', '#float leaf');
     expectType(typeOfExpr('#state.status'), 'int', '#string leaf');
   });
   guard('TC-OM-05', '# directly before an object-model leaf is never an error', () => {
@@ -227,5 +231,40 @@ describe('TC-OM: object-model values', () => {
   });
   rule('TC-OM-05', 'with parentheses it is an ordinary length operator', () => {
     expectTypes('echo #(move.axes[0].homed)', [{ code: CODE.operand, at: '#(move.axes[0].homed)', firmware: MSG.length }]);
+  });
+});
+
+describe('TC-OM-06..08: bitmaps, firmware lines, SBC fields', () => {
+  const unknownPaths = (t: string, opts: { rrfVersion?: string; sbc?: boolean } = {}) =>
+    lintTc(t, opts).filter(d => /is not a known Object Model path/.test(d.message)).length;
+  rule('TC-OM-06', 'a bitmap is an int bit mask; an element is the number of a set bit', () => {
+    expectType(typeOfExpr('fans[0].thermostatic.sensors'), 'int', 'bare');
+    expectType(typeOfExpr('fans[0].thermostatic.sensors[0]'), 'int', 'element');
+    expectType(typeOfExpr('#fans[0].thermostatic.sensors'), 'int', 'count');
+    expectNoTypes('echo fans[0].thermostatic.sensors + 1');
+  });
+  rule('TC-OM-01', 'an index taken from a float field is an error', () => {
+    expectTypes('echo move.axes[move.axes[0].max]', [{ code: CODE.index, at: 'move.axes[0].max', firmware: MSG.integerExpr }]);
+  });
+  rule('TC-OM-07', 'paths follow the target firmware line; with none, any line', () => {
+    assert.equal(unknownPaths('echo move.shaping.durations', { rrfVersion: '3.5' }), 0);
+    assert.equal(unknownPaths('echo move.shaping.durations', { rrfVersion: '3.6' }), 1);
+    assert.equal(unknownPaths('echo move.shaping.delays', { rrfVersion: '3.5' }), 1);
+    assert.equal(unknownPaths('echo move.shaping.delays'), 0);
+    assert.equal(unknownPaths('echo move.shaping.durations'), 0);
+  });
+  rule('TC-OM-07', 'names are spelled as the firmware spells them', () => {
+    assert.equal(unknownPaths('echo job.build.m486Names'), 0);
+    assert.equal(unknownPaths('echo job.build.m486names'), 1);
+    assert.equal(unknownPaths('echo seqs.volChanges'), 0);
+  });
+  rule('TC-OM-08', 'fields of a single-board computer exist only with rrfgcode.sbc', () => {
+    assert.equal(unknownPaths('echo sbc.cpu.avgLoad'), 1);
+    assert.equal(unknownPaths('echo sbc.cpu.avgLoad', { sbc: true }), 0);
+    assert.equal(unknownPaths('echo job.layers', { sbc: true }), 0);
+    assert.equal(unknownPaths('echo job.layers'), 1);
+    // Typed only with an SBC: an int|null core count is not a condition.
+    expectTypes('if sbc.cpu.numCores\n  echo 1', [{ code: CODE.boolean, at: 'sbc.cpu.numCores' }], { sbc: true });
+    expectNoTypes('if sbc.cpu.numCores\n  echo 1');
   });
 });

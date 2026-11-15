@@ -3,7 +3,7 @@
 import { Hover, MarkupKind } from 'vscode-languageserver/node';
 import { Token, TokenType } from '../parser/types';
 import { SymbolTable } from './symbolTable';
-import { isValidOmPath, getOmPathInfo, isOmIndexAvailable } from './objectModelIndex';
+import { isValidOmPath, getOmPathInfo, isOmIndexAvailable, OmTarget } from './objectModelIndex';
 import { typeAtPosition, globalType, displayType } from './typecheck';
 
 interface GCodeDoc { title: string; description: string; anchor?: string }
@@ -26,6 +26,8 @@ export function buildHover(
     // a var whose block already ended reports it as undeclared (matching the
     // diagnostics) instead of pointing at the dead declaration.
     docLines?: string[],
+    /** Firmware line and SBC setting for object-model paths. */
+    omTarget?: OmTarget,
 ): Hover | null {
     const tokIdx = tokens.findIndex(t => t.start <= character && character < t.end);
     if (tokIdx === -1) return null;
@@ -69,7 +71,7 @@ export function buildHover(
             if (tokIdx > 0 && tokens[tokIdx - 1]?.type === TokenType.Dot) {
                 // Treat as an OM field — reconstruct path
                 const fullPath = reconstructOmPath(tokens, tokIdx);
-                return buildOmHover(fullPath);
+                return buildOmHover(fullPath, omTarget);
             }
             const data = functionsData[tok.value.toLowerCase()];
             if (!data) return mkHover(`**${tok.value}()**\n\n*No documentation found.*`);
@@ -172,7 +174,7 @@ export function buildHover(
 
             // Bare identifier — reconstruct the full OM path from token context
             const fullPath = reconstructOmPath(tokens, tokIdx);
-            return buildOmHover(fullPath);
+            return buildOmHover(fullPath, omTarget);
         }
 
         // ── Operators ─────────────────────────────────────────────────────────
@@ -259,7 +261,7 @@ function reconstructOmPath(tokens: Token[], tokIdx: number): string {
 }
 
 // ── Object Model hover ────────────────────────────────────────────────────────
-function buildOmHover(path: string): Hover {
+function buildOmHover(path: string, omTarget?: OmTarget): Hover {
     const omRef = '\n\nSee [Object Model reference](https://github.com/Duet3D/RepRapFirmware/wiki/Object-Model-Reference).';
     // Normalise [n] → [] for lookup
     const normPath = path.replace(/\[\d+\]/g, '[]');
@@ -268,9 +270,9 @@ function buildOmHover(path: string): Hover {
         return mkHover(`**${path}**\n\nObject Model path — resolved at runtime by RepRapFirmware.${omRef}`);
     }
 
-    if (isValidOmPath(normPath)) {
-        const info = getOmPathInfo(normPath);
-        const typeStr = info ? ` · Type: \`${info.type}${info.isArray ? '[]' : ''}\`` : '';
+    if (isValidOmPath(normPath, omTarget)) {
+        const info = getOmPathInfo(normPath, omTarget);
+        const typeStr = info ? ` · Type: \`${info.type.split('|').join(' | ')}\`` : '';
         return mkHover(`**${path}**\n\nObject Model path${typeStr}${omRef}`);
     }
 
