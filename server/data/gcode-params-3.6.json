@@ -1,0 +1,1233 @@
+{
+ "_meta": {
+  "generator": "scripts/gcode-params-gen.py",
+  "firmware": "RepRapFirmware 3.6.4",
+  "canlib": "CANlib 3.6.3",
+  "kinds": "float, int, uint, bool, string, ip, mac, driver (n or board.n), any; [] is a colon-separated list; the letter \"axes\" stands for every axis letter without an entry of its own"
+ },
+ "commands": {
+  "G0": {
+   "E": "float[]",
+   "F": "float",
+   "H": "uint",
+   "P": "int",
+   "R": "uint",
+   "S": "float[]",
+   "axes": "float"
+  },
+  "G1": {
+   "E": "float[]",
+   "F": "float",
+   "H": "uint",
+   "P": "int",
+   "R": "uint",
+   "S": "float[]",
+   "axes": "float"
+  },
+  "G2": {
+   "E": "float[]",
+   "F": "float",
+   "I": "float",
+   "J": "float",
+   "K": "float",
+   "P": "int",
+   "R": "float",
+   "S": "float",
+   "axes": "float"
+  },
+  "G3": {
+   "E": "float[]",
+   "F": "float",
+   "I": "float",
+   "J": "float",
+   "K": "float",
+   "P": "int",
+   "R": "float",
+   "S": "float",
+   "axes": "float"
+  },
+  "G4": {
+   "P": "int",
+   "S": "float"
+  },
+  "G10": {
+   "L": "uint",
+   "P": "uint",
+   "R": "float[]",
+   "S": "float[]",
+   "axes": "float"
+  },
+  "G11": {},
+  "G17": {},
+  "G18": {},
+  "G19": {},
+  "G20": {},
+  "G21": {},
+  "G28": {},
+  "G29": {
+   "K": "uint",
+   "P": "string",
+   "S": "int"
+  },
+  "G30": {
+   "H": "float",
+   "K": "uint",
+   "P": "int",
+   "S": "int",
+   "X": "float",
+   "Y": "float",
+   "Z": "float"
+  },
+  "G31": {
+   "H": "int",
+   "K": "uint",
+   "P": "int",
+   "S": "float",
+   "T": "float[]",
+   "Z": "float",
+   "axes": "float"
+  },
+  "G32": {},
+  "G38": {},
+  "G38.2": {
+   "F": "float",
+   "K": "uint",
+   "P": "uint",
+   "axes": "float"
+  },
+  "G38.3": {
+   "F": "float",
+   "K": "uint",
+   "P": "uint",
+   "axes": "float"
+  },
+  "G38.4": {
+   "F": "float",
+   "K": "uint",
+   "P": "uint",
+   "axes": "float"
+  },
+  "G38.5": {
+   "F": "float",
+   "K": "uint",
+   "P": "uint",
+   "axes": "float"
+  },
+  "G53": {},
+  "G54": {},
+  "G55": {},
+  "G56": {},
+  "G57": {},
+  "G58": {},
+  "G59": {},
+  "G60": {
+   "S": "uint"
+  },
+  "G68": {
+   "A": "float",
+   "B": "float",
+   "R": "float",
+   "X": "float",
+   "Y": "float"
+  },
+  "G69": {},
+  "G90": {},
+  "G91": {},
+  "G92": {
+   "E": "float",
+   "axes": "float"
+  },
+  "G93": {},
+  "G94": {},
+  "M0": {},
+  "M1": {},
+  "M2": {},
+  "M3": {
+   "P": "uint",
+   "S": "float|uint"
+  },
+  "M4": {
+   "P": "uint",
+   "S": "uint"
+  },
+  "M5": {
+   "P": "uint"
+  },
+  "M17": {
+   "E": "uint[]",
+   "S": "float"
+  },
+  "M18": {
+   "E": "uint[]",
+   "S": "float"
+  },
+  "M20": {
+   "C": "int",
+   "P": "string",
+   "R": "uint",
+   "S": "int"
+  },
+  "M21": {
+   "P": "int"
+  },
+  "M22": {
+   "P": "int"
+  },
+  "M23": {},
+  "M24": {
+   "P": "uint"
+  },
+  "M25": {
+   "P": "uint"
+  },
+  "M26": {
+   "P": "float",
+   "S": "uint",
+   "X": "float",
+   "Y": "float",
+   "Z": "float"
+  },
+  "M27": {},
+  "M28": {},
+  "M29": {},
+  "M30": {},
+  "M32": {},
+  "M36": {},
+  "M36.1": {
+   "P": "string",
+   "S": "uint"
+  },
+  "M36.2": {
+   "P": "string",
+   "S": "uint"
+  },
+  "M37": {
+   "F": "uint",
+   "P": "string",
+   "S": "uint"
+  },
+  "M38": {},
+  "M39": {
+   "P": "uint",
+   "S": "int"
+  },
+  "M42": {
+   "P": "uint",
+   "S": "float"
+  },
+  "M73": {
+   "C": "float",
+   "R": "float"
+  },
+  "M80": {
+   "C": "string"
+  },
+  "M81": {
+   "C": "string",
+   "D": "uint",
+   "S": "uint"
+  },
+  "M82": {},
+  "M83": {},
+  "M84": {
+   "E": "uint[]",
+   "S": "float"
+  },
+  "M85": {},
+  "M92": {
+   "E": "float[]",
+   "S": "uint",
+   "axes": "float"
+  },
+  "M98": {
+   "P": "string",
+   "R": "uint"
+  },
+  "M99": {},
+  "M101": {},
+  "M102": {},
+  "M103": {},
+  "M104": {
+   "R": "float",
+   "S": "float",
+   "T": "int"
+  },
+  "M105": {},
+  "M106": {
+   "B": "float",
+   "C": "string",
+   "H": "int[]",
+   "L": "float",
+   "P": "uint",
+   "R": "uint",
+   "S": "float",
+   "T": "float[]",
+   "X": "float"
+  },
+  "M107": {},
+  "M108": {},
+  "M109": {
+   "R": "float",
+   "S": "float",
+   "T": "int"
+  },
+  "M110": {},
+  "M111": {
+   "B": "uint",
+   "D": "uint",
+   "F": "uint",
+   "P": "uint",
+   "S": "uint"
+  },
+  "M112": {},
+  "M114": {},
+  "M115": {
+   "B": "uint"
+  },
+  "M116": {
+   "C": "uint[]",
+   "H": "uint[]",
+   "P": "int",
+   "S": "float"
+  },
+  "M117": {},
+  "M118": {
+   "D": "bool",
+   "L": "uint",
+   "P": "int",
+   "Q": "uint",
+   "R": "bool",
+   "S": "string",
+   "T": "string"
+  },
+  "M119": {},
+  "M120": {},
+  "M121": {},
+  "M122": {
+   "A": "int",
+   "B": "uint",
+   "C": "uint",
+   "F": "float[]",
+   "P": "int",
+   "R": "uint",
+   "S": "float|uint",
+   "T": "float[]",
+   "U": "float[]",
+   "V": "float[]|int",
+   "W": "float[]"
+  },
+  "M140": {
+   "H": "int",
+   "P": "uint",
+   "R": "float",
+   "S": "float"
+  },
+  "M141": {
+   "H": "int",
+   "P": "uint",
+   "R": "float",
+   "S": "float"
+  },
+  "M143": {
+   "A": "uint",
+   "C": "int",
+   "H": "uint",
+   "P": "uint",
+   "S": "float",
+   "T": "uint"
+  },
+  "M144": {
+   "P": "uint",
+   "S": "int"
+  },
+  "M150": {
+   "B": "uint",
+   "E": "uint",
+   "F": "bool|uint",
+   "P": "uint",
+   "R": "uint",
+   "S": "uint",
+   "U": "uint",
+   "W": "uint",
+   "Y": "uint"
+  },
+  "M190": {
+   "P": "uint",
+   "R": "float",
+   "S": "float"
+  },
+  "M191": {
+   "P": "uint",
+   "R": "float",
+   "S": "float"
+  },
+  "M200": {
+   "D": "float[]",
+   "S": "int"
+  },
+  "M201": {
+   "E": "float[]",
+   "axes": "float"
+  },
+  "M201.1": {
+   "E": "float[]",
+   "axes": "float"
+  },
+  "M203": {
+   "E": "float[]",
+   "I": "float",
+   "S": "int",
+   "axes": "float"
+  },
+  "M204": {
+   "P": "float",
+   "S": "float",
+   "T": "float"
+  },
+  "M205": {
+   "E": "float[]",
+   "axes": "float"
+  },
+  "M206": {
+   "axes": "float"
+  },
+  "M207": {
+   "F": "float",
+   "P": "uint",
+   "R": "float",
+   "S": "float",
+   "T": "float",
+   "Z": "float"
+  },
+  "M208": {
+   "S": "int",
+   "axes": "float[]"
+  },
+  "M220": {
+   "S": "float"
+  },
+  "M221": {
+   "D": "uint",
+   "S": "float"
+  },
+  "M226": {
+   "P": "uint"
+  },
+  "M260": {
+   "A": "uint",
+   "B": "int[]",
+   "R": "uint",
+   "S": "string",
+   "V": "string"
+  },
+  "M260.1": {
+   "A": "uint",
+   "B": "int[]",
+   "F": "uint",
+   "P": "uint",
+   "R": "uint",
+   "S": "string"
+  },
+  "M260.2": {
+   "B": "int[]",
+   "P": "uint",
+   "S": "string"
+  },
+  "M260.3": {
+   "B": "int[]",
+   "P": "uint",
+   "S": "string"
+  },
+  "M260.4": {
+   "A": "uint",
+   "B": "int[]",
+   "P": "uint",
+   "R": "uint",
+   "S": "string",
+   "V": "string"
+  },
+  "M261": {
+   "A": "uint",
+   "B": "uint",
+   "V": "string"
+  },
+  "M261.1": {
+   "A": "uint",
+   "B": "uint",
+   "F": "uint",
+   "P": "uint",
+   "R": "uint",
+   "V": "string"
+  },
+  "M261.2": {
+   "B": "uint",
+   "P": "uint",
+   "V": "string"
+  },
+  "M261.3": {
+   "B": "uint",
+   "P": "uint",
+   "V": "string"
+  },
+  "M261.4": {
+   "B": "uint",
+   "P": "uint",
+   "V": "string"
+  },
+  "M280": {
+   "P": "uint",
+   "S": "float"
+  },
+  "M290": {
+   "R": "int",
+   "S": "float",
+   "axes": "float"
+  },
+  "M291": {
+   "F": "float|int|string|uint",
+   "H": "float|int",
+   "J": "uint",
+   "K": "any",
+   "L": "float|int",
+   "P": "string",
+   "R": "string",
+   "S": "uint",
+   "T": "float",
+   "axes": "int"
+  },
+  "M292": {
+   "P": "int",
+   "R": "any",
+   "S": "uint"
+  },
+  "M300": {
+   "C": "string",
+   "P": "uint",
+   "S": "uint"
+  },
+  "M301": {
+   "D": "float",
+   "H": "uint",
+   "I": "float",
+   "P": "float"
+  },
+  "M302": {
+   "P": "int",
+   "R": "float",
+   "S": "float"
+  },
+  "M303": {
+   "A": "float",
+   "F": "float",
+   "H": "int",
+   "P": "float",
+   "Q": "uint",
+   "S": "float",
+   "T": "int",
+   "Y": "float"
+  },
+  "M304": {
+   "D": "float",
+   "H": "uint",
+   "I": "float",
+   "P": "float"
+  },
+  "M305": {},
+  "M307": {
+   "A": "float",
+   "B": "int",
+   "C": "float[]",
+   "D": "float",
+   "E": "float",
+   "H": "uint",
+   "I": "int",
+   "K": "float[]",
+   "R": "float",
+   "S": "float",
+   "V": "float"
+  },
+  "M308": {
+   "A": "string",
+   "B": "float",
+   "C": "float|uint",
+   "D": "bool",
+   "F": "int|uint",
+   "H": "float|int",
+   "K": "string",
+   "L": "float|int",
+   "P": "string",
+   "R": "float",
+   "S": "uint",
+   "T": "float",
+   "U": "float",
+   "V": "float",
+   "W": "uint",
+   "Y": "string"
+  },
+  "M309": {
+   "A": "uint",
+   "P": "uint",
+   "S": "float[]",
+   "T": "float[]"
+  },
+  "M350": {
+   "E": "int[]",
+   "I": "int",
+   "axes": "uint"
+  },
+  "M374": {
+   "P": "string"
+  },
+  "M375": {
+   "P": "string"
+  },
+  "M376": {
+   "H": "float"
+  },
+  "M400": {
+   "S": "uint"
+  },
+  "M401": {
+   "P": "uint"
+  },
+  "M402": {
+   "P": "uint"
+  },
+  "M404": {
+   "N": "float"
+  },
+  "M407": {},
+  "M408": {
+   "B": "uint",
+   "R": "int",
+   "S": "uint"
+  },
+  "M409": {
+   "F": "string",
+   "I": "int",
+   "K": "string",
+   "R": "int"
+  },
+  "M425": {
+   "S": "uint",
+   "axes": "float"
+  },
+  "M450": {},
+  "M451": {},
+  "M452": {
+   "C": "string",
+   "F": "uint",
+   "Q": "uint",
+   "R": "float",
+   "S": "uint"
+  },
+  "M453": {},
+  "M470": {
+   "P": "string"
+  },
+  "M471": {
+   "D": "uint",
+   "S": "string",
+   "T": "string"
+  },
+  "M472": {
+   "P": "string",
+   "R": "uint"
+  },
+  "M486": {
+   "A": "string",
+   "P": "uint",
+   "S": "int|uint",
+   "T": "uint",
+   "U": "uint"
+  },
+  "M500": {
+   "P": "uint[]"
+  },
+  "M501": {},
+  "M502": {},
+  "M503": {},
+  "M505": {
+   "P": "string"
+  },
+  "M505.1": {
+   "P": "string"
+  },
+  "M540": {
+   "I": "uint",
+   "P": "mac"
+  },
+  "M550": {
+   "P": "string"
+  },
+  "M551": {
+   "P": "string"
+  },
+  "M552": {
+   "I": "uint",
+   "P": "ip|string",
+   "S": "int"
+  },
+  "M553": {
+   "P": "ip"
+  },
+  "M554": {
+   "P": "ip"
+  },
+  "M555": {
+   "P": "uint"
+  },
+  "M556": {
+   "P": "int",
+   "S": "float",
+   "axes": "float"
+  },
+  "M557": {
+   "P": "uint[]",
+   "R": "float",
+   "S": "float[]",
+   "axes": "float[]"
+  },
+  "M558": {
+   "A": "uint",
+   "B": "int",
+   "C": "string",
+   "F": "float[]",
+   "H": "float[]",
+   "K": "uint",
+   "P": "uint",
+   "R": "float",
+   "S": "float",
+   "T": "float"
+  },
+  "M558.1": {
+   "A": "float",
+   "B": "float",
+   "C": "float",
+   "K": "uint",
+   "S": "float"
+  },
+  "M558.2": {
+   "K": "uint",
+   "R": "uint",
+   "S": "int"
+  },
+  "M558.3": {
+   "F": "float",
+   "H": "float",
+   "K": "uint",
+   "S": "bool",
+   "V": "float"
+  },
+  "M559": {
+   "C": "uint",
+   "P": "string",
+   "S": "int"
+  },
+  "M560": {
+   "C": "uint",
+   "P": "string",
+   "S": "int"
+  },
+  "M561": {},
+  "M562": {
+   "P": "uint"
+  },
+  "M563": {
+   "D": "int[]",
+   "F": "int[]",
+   "H": "int[]",
+   "L": "int",
+   "P": "uint",
+   "R": "int",
+   "S": "string",
+   "X": "uint[]",
+   "Y": "uint[]",
+   "Z": "uint[]"
+  },
+  "M564": {
+   "H": "int",
+   "S": "int"
+  },
+  "M566": {
+   "E": "float[]",
+   "P": "uint",
+   "axes": "float"
+  },
+  "M567": {
+   "E": "float[]",
+   "P": "uint"
+  },
+  "M568": {
+   "A": "uint",
+   "F": "uint",
+   "P": "uint",
+   "R": "float[]",
+   "S": "float[]"
+  },
+  "M569": {
+   "B": "uint",
+   "C": "uint",
+   "D": "uint",
+   "F": "uint",
+   "H": "uint",
+   "P": "driver|driver[]",
+   "R": "int",
+   "S": "int|uint",
+   "T": "float[]",
+   "U": "int",
+   "V": "uint",
+   "Y": "uint[]"
+  },
+  "M569.1": {
+   "A": "float",
+   "C": "float",
+   "D": "float",
+   "E": "float[]",
+   "I": "float",
+   "P": "driver|driver[]",
+   "Q": "float",
+   "R": "float",
+   "S": "uint",
+   "T": "uint",
+   "V": "float",
+   "Y": "string"
+  },
+  "M569.2": {
+   "P": "driver|driver[]",
+   "R": "uint",
+   "V": "uint"
+  },
+  "M569.3": {
+   "P": "driver[]"
+  },
+  "M569.4": {
+   "P": "driver|driver[]",
+   "T": "float",
+   "V": "float"
+  },
+  "M569.5": {
+   "A": "uint",
+   "D": "uint",
+   "F": "string",
+   "P": "driver[]",
+   "R": "uint",
+   "S": "uint",
+   "V": "uint"
+  },
+  "M569.6": {
+   "A": "float",
+   "C": "string",
+   "P": "driver|driver[]",
+   "S": "float|uint",
+   "V": "float|uint"
+  },
+  "M569.7": {
+   "C": "string",
+   "P": "driver|driver[]",
+   "S": "uint",
+   "V": "float"
+  },
+  "M569.8": {
+   "P": "driver[]"
+  },
+  "M570": {
+   "H": "uint",
+   "P": "float",
+   "R": "uint",
+   "T": "float"
+  },
+  "M571": {
+   "P": "int",
+   "S": "float"
+  },
+  "M572": {
+   "D": "uint[]",
+   "S": "float"
+  },
+  "M574": {
+   "K": "uint",
+   "P": "string",
+   "S": "uint",
+   "axes": "uint"
+  },
+  "M575": {
+   "B": "uint",
+   "C": "string",
+   "P": "uint",
+   "S": "uint"
+  },
+  "M576": {
+   "F": "uint",
+   "P": "uint",
+   "S": "uint"
+  },
+  "M577": {
+   "P": "uint[]",
+   "S": "uint"
+  },
+  "M579": {
+   "axes": "float"
+  },
+  "M581": {
+   "P": "int|uint[]",
+   "R": "int",
+   "S": "int",
+   "T": "uint"
+  },
+  "M582": {
+   "S": "uint",
+   "T": "uint"
+  },
+  "M584": {
+   "E": "driver[]",
+   "P": "uint",
+   "R": "uint",
+   "S": "uint",
+   "axes": "driver[]"
+  },
+  "M585": {
+   "F": "float",
+   "K": "uint",
+   "P": "uint",
+   "R": "float",
+   "S": "int",
+   "axes": "float"
+  },
+  "M586": {
+   "C": "string",
+   "H": "ip",
+   "I": "uint",
+   "P": "uint",
+   "R": "int",
+   "S": "int",
+   "T": "int"
+  },
+  "M586.4": {
+   "C": "string",
+   "K": "string",
+   "N": "bool",
+   "O": "uint",
+   "Q": "uint",
+   "R": "bool",
+   "S": "string",
+   "T": "string",
+   "U": "string",
+   "W": "string"
+  },
+  "M587": {
+   "A": "string",
+   "E": "string",
+   "F": "uint",
+   "I": "ip",
+   "J": "ip",
+   "K": "ip",
+   "P": "string",
+   "Q": "string",
+   "S": "string",
+   "U": "string",
+   "X": "uint"
+  },
+  "M587.1": {},
+  "M587.2": {
+   "F": "uint"
+  },
+  "M588": {
+   "S": "string"
+  },
+  "M589": {
+   "C": "int",
+   "I": "ip",
+   "L": "uint",
+   "P": "string",
+   "S": "string",
+   "T": "float"
+  },
+  "M591": {
+   "A": "int|uint",
+   "C": "string",
+   "D": "uint",
+   "E": "float",
+   "L": "float",
+   "P": "uint",
+   "R": "uint[]",
+   "S": "uint"
+  },
+  "M592": {
+   "A": "float",
+   "B": "float",
+   "D": "uint",
+   "L": "float"
+  },
+  "M593": {
+   "F": "float",
+   "H": "float[]",
+   "P": "string",
+   "S": "float",
+   "T": "float[]"
+  },
+  "M594": {
+   "P": "int",
+   "S": "float",
+   "Z": "float[]"
+  },
+  "M595": {
+   "P": "uint",
+   "Q": "uint",
+   "R": "uint"
+  },
+  "M596": {
+   "P": "uint"
+  },
+  "M597": {
+   "axes": "float"
+  },
+  "M598": {},
+  "M599": {
+   "P": "uint",
+   "S": "uint",
+   "axes": "float[]"
+  },
+  "M600": {
+   "P": "uint"
+  },
+  "M601": {
+   "P": "uint"
+  },
+  "M606": {
+   "S": "uint"
+  },
+  "M655": {
+   "A": "string",
+   "B": "uint",
+   "C": "string",
+   "E": "float",
+   "F": "float",
+   "P": "uint",
+   "R": "int",
+   "S": "int"
+  },
+  "M665": {
+   "B": "float",
+   "H": "float",
+   "L": "float[]",
+   "R": "float",
+   "X": "float",
+   "Y": "float",
+   "Z": "float"
+  },
+  "M666": {
+   "A": "float|uint",
+   "B": "float",
+   "C": "float[]",
+   "H": "uint[]",
+   "I": "float[]",
+   "J": "uint[]",
+   "L": "uint[]",
+   "O": "uint[]",
+   "Q": "float",
+   "R": "float[]",
+   "S": "float",
+   "U": "float|uint[]",
+   "V": "float",
+   "W": "float",
+   "X": "float|float[]",
+   "Y": "float|float[]",
+   "Z": "float"
+  },
+  "M667": {},
+  "M669": {
+   "A": "float|float[]",
+   "B": "float|float[]",
+   "C": "float[]",
+   "D": "float|float[]",
+   "F": "float",
+   "H": "float|float[]",
+   "I": "float[]",
+   "J": "float[]",
+   "K": "float[]|uint",
+   "L": "float[]|int",
+   "N": "uint",
+   "O": "float[]",
+   "P": "float|float[]",
+   "R": "float|float[]",
+   "S": "float",
+   "T": "float",
+   "U": "float[]",
+   "X": "float|float[]",
+   "Y": "float|float[]",
+   "Z": "float|float[]",
+   "axes": "float[]"
+  },
+  "M670": {
+   "P": "uint[]",
+   "T": "uint"
+  },
+  "M671": {
+   "F": "float",
+   "P": "float",
+   "S": "float",
+   "X": "float[]",
+   "Y": "float[]"
+  },
+  "M672": {
+   "K": "uint",
+   "S": "uint[]"
+  },
+  "M673": {
+   "F": "float",
+   "S": "float"
+  },
+  "M675": {
+   "F": "float",
+   "K": "uint",
+   "P": "uint",
+   "R": "float"
+  },
+  "M701": {
+   "P": "bool",
+   "S": "string"
+  },
+  "M702": {
+   "P": "bool"
+  },
+  "M703": {},
+  "M851": {
+   "Z": "float"
+  },
+  "M905": {
+   "P": "string",
+   "S": "string"
+  },
+  "M906": {
+   "E": "float[]",
+   "I": "float",
+   "T": "float",
+   "axes": "float"
+  },
+  "M911": {
+   "P": "string",
+   "R": "float",
+   "S": "float"
+  },
+  "M912": {
+   "S": "float"
+  },
+  "M913": {
+   "E": "float[]",
+   "axes": "float"
+  },
+  "M915": {
+   "E": "uint[]",
+   "F": "bool|uint",
+   "H": "uint",
+   "P": "driver[]",
+   "R": "uint",
+   "S": "int",
+   "T": "uint"
+  },
+  "M916": {},
+  "M917": {
+   "E": "float[]",
+   "axes": "float"
+  },
+  "M918": {
+   "C": "uint",
+   "E": "int",
+   "F": "uint",
+   "P": "uint",
+   "R": "uint"
+  },
+  "M929": {
+   "P": "string",
+   "S": "uint"
+  },
+  "M950": {
+   "C": "string",
+   "D": "uint",
+   "E": "uint",
+   "F": "uint",
+   "H": "uint",
+   "J": "uint",
+   "K": "float|float[]|uint",
+   "L": "uint[]",
+   "P": "uint",
+   "Q": "uint",
+   "R": "uint",
+   "S": "uint",
+   "T": "uint",
+   "U": "uint"
+  },
+  "M951": {
+   "D": "float",
+   "F": "float",
+   "H": "uint",
+   "I": "float",
+   "P": "float",
+   "Z": "float[]"
+  },
+  "M952": {
+   "A": "uint",
+   "B": "uint",
+   "J": "float",
+   "S": "uint",
+   "T": "float"
+  },
+  "M953": {},
+  "M954": {
+   "A": "uint"
+  },
+  "M955": {
+   "C": "string",
+   "I": "uint",
+   "P": "driver",
+   "Q": "uint",
+   "R": "uint",
+   "S": "uint"
+  },
+  "M956": {
+   "A": "uint",
+   "F": "string",
+   "P": "driver",
+   "S": "uint"
+  },
+  "M957": {
+   "B": "uint",
+   "D": "uint",
+   "E": "string",
+   "P": "uint",
+   "S": "string"
+  },
+  "M970": {
+   "E": "uint[]",
+   "axes": "uint"
+  },
+  "M970.1": {
+   "E": "float[]",
+   "axes": "float"
+  },
+  "M970.2": {
+   "E": "float[]",
+   "axes": "float"
+  },
+  "M997": {
+   "A": "uint",
+   "B": "uint",
+   "P": "string",
+   "S": "uint|uint[]"
+  },
+  "M998": {
+   "P": "int"
+  },
+  "M999": {
+   "A": "uint",
+   "B": "uint",
+   "P": "string"
+  },
+  "T": {
+   "P": "uint",
+   "R": "uint",
+   "T": "int"
+  }
+ }
+}
