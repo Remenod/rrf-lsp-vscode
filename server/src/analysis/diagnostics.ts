@@ -12,6 +12,7 @@ import { ArgCheckConfig } from './argCheckConfig';
 import { LINE_TOO_LONG_CODE } from './codeActions';
 import { lineIndent } from './utils';
 import { typeDiagnostics } from './typecheck';
+import { blockDiagnostics } from './blocks';
 
 export interface DiagnosticsOptions {
   symbolTable: SymbolTable;
@@ -159,6 +160,15 @@ export function computeDiagnostics(uri: string, text: string, opts: DiagnosticsO
     // Path-taking functions (fileexists/fileread) can appear on any line, not
     // just G/M/T command lines, so they are validated separately.
     diagnostics.push(...validateFunctionPathArgs(tokens, sdRoot, argCheckConfig));
+  }
+
+  for (const w of blockDiagnostics(lines)) {
+    diagnostics.push({
+      severity: DiagnosticSeverity.Warning,
+      range: mkRange(w.line, w.start, w.line, w.end),
+      message: w.message,
+      source: 'rrf-gcode',
+    });
   }
 
   if (opts.typeCheck?.enabled !== false) {

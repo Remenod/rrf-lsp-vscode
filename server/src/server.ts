@@ -69,7 +69,7 @@ import { pathLocationAtCursor } from './analysis/pathDefinition';
 import { lineIndent, findTokenAtChar } from './analysis/utils';
 import { computeDiagnostics } from './analysis/diagnostics';
 import { globalTypesSignature } from './analysis/typecheck';
-import { SNIFFED_EXTENSIONS, looksLikeGCode, collectRrfFiles as collectRrfFilesUnder } from './analysis/rrfFiles';
+import { mayBeRrfFile, isRrfFile, collectRrfFiles as collectRrfFilesUnder } from './analysis/rrfFiles';
 
 // ── Connection setup ──────────────────────────────────────────────────────────
 const connection = createConnection(ProposedFeatures.all);
@@ -337,9 +337,9 @@ connection.onDidChangeWatchedFiles((params: DidChangeWatchedFilesParams) => {
     // as the startup scan for shared extensions.
     try {
       const fsPath = URI.parse(uri).fsPath;
-      const ext = path.extname(fsPath).toLowerCase();
+      if (!mayBeRrfFile(fsPath)) continue;
       const content = fs.readFileSync(fsPath, 'utf8');
-      if ((ext === '' || SNIFFED_EXTENSIONS.has(ext)) && !looksLikeGCode(content)) continue;
+      if (!isRrfFile(fsPath, content)) continue;
       symbolTable.indexDocument(uri, content);
       backgroundDiagnosticUris.add(uri);
       publishDiagnosticsForText(uri, content);

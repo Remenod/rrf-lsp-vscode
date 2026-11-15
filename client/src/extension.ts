@@ -88,7 +88,11 @@ export function activate(context: ExtensionContext) {
       // Watch RRF files so the server can keep its workspace index, path
       // diagnostics and SD-root detection fresh when files appear, change or
       // disappear outside the editor (git pull, slicer output, file explorer).
-      fileEvents: workspace.createFileSystemWatcher('**/*.{g,G,gcode,gc,gco,macro,cfg}')
+      // Files in a macros folder may have any name (RRF treats them all as macros).
+      fileEvents: [
+        workspace.createFileSystemWatcher('**/*.{g,G,gcode,gc,gco,macro,cfg}'),
+        workspace.createFileSystemWatcher('**/macros/**'),
+      ]
     },
     middleware: {
       // Intercept our quick-fix commands and apply them client-side via the

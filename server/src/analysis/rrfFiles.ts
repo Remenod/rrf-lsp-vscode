@@ -44,6 +44,28 @@ export function looksLikeGCode(text: string): boolean {
   return hits >= Math.max(2, Math.floor(checked.length * 0.2));
 }
 
+/** RepRapFirmware treats every file in a macros folder as a macro, whatever its name ("Upgrade to 4.0.1"). */
+function inMacrosFolder(filePath: string): boolean {
+  return filePath.split(/[\\/]/).slice(0, -1).includes('macros');
+}
+
+/** Whether a file can be RRF G-code judging by its path alone; `isRrfFile` then decides on the content. */
+export function mayBeRrfFile(filePath: string): boolean {
+  const ext = path.extname(filePath).toLowerCase();
+  return ext === '' || RRF_EXTENSIONS.has(ext) || inMacrosFolder(filePath);
+}
+
+/**
+ * Whether a file is RRF G-code: a registered extension, or — with no extension, an extension
+ * other ecosystems share (.cfg/.macro) or any name inside a macros folder — content that looks like
+ * G-code, so e.g. a Klipper printer.cfg or an image in macros/ is not indexed.
+ */
+export function isRrfFile(filePath: string, content: string): boolean {
+  const ext = path.extname(filePath).toLowerCase();
+  if (RRF_EXTENSIONS.has(ext) && !SNIFFED_EXTENSIONS.has(ext)) return true;
+  return mayBeRrfFile(filePath) && looksLikeGCode(content);
+}
+
 /**
  * Collect all RRF files under `dir`. Hidden entries and node_modules are skipped,
  * and so is every file for which `skip(uri)` is true (the server passes the open
@@ -63,11 +85,7 @@ export function collectRrfFiles(dir: string, skip: (uri: string) => boolean = ()
       continue;
     }
 
-    const ext = path.extname(entry.name).toLowerCase();
-    const noExt = ext === '';
-
-    // Skip files with non-RRF extensions
-    if (!noExt && !RRF_EXTENSIONS.has(ext)) continue;
+    if (!mayBeRrfFile(fullPath)) continue;
 
     const fileUri = URI.file(fullPath).toString();
     if (skip(fileUri)) continue;
@@ -79,9 +97,7 @@ export function collectRrfFiles(dir: string, skip: (uri: string) => boolean = ()
       continue;
     }
 
-    // Extensionless and shared-extension files (.cfg/.macro) must also LOOK
-    // like RRF G-code, so e.g. a Klipper printer.cfg is not indexed.
-    if ((noExt || SNIFFED_EXTENSIONS.has(ext)) && !looksLikeGCode(content)) continue;
+    if (!isRrfFile(fullPath, content)) continue;
 
     results.push({ uri: fileUri, content });
   }

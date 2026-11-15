@@ -1014,6 +1014,7 @@ export function validateLine(
   if (first.type === TokenType.GCode || first.type === TokenType.TCode) {
     checkAdjacentNumberString(tokens, errors);
     errors.push(...checkDuplicateGCodeParams(tokens));
+    errors.push(...checkParameterValues(tokens));
     if (ctx) errors.push(...checkDeclaredVars(tokens, ctx));
     // {…} blocks hold real expressions — run them through the expression
     // validator so syntax and function-arity errors are reported here just
@@ -1355,6 +1356,39 @@ function checkDuplicateGCodeParams(tokens: Token[]): ParseError[] {
   return errors;
 }
 
+/**
+ * Parameter values the firmware reads differently from how they look:
+ *  * `X-{…}` / `X+{…}`: ReadFloatValue only evaluates an expression when the value starts with `{`;
+ *    here it sees the sign, finds no number and stops with "expected number after 'X'".
+ *  * `P"text" ^ …`: GetQuotedString ends the value at the closing quote, so what follows is not
+ *    part of it.
+ */
+function checkParameterValues(tokens: Token[]): ParseError[] {
+  const errors: ParseError[] = [];
+  const head = tokens[0];
+  if (head && RAW_TEXT_COMMANDS.has(head.value.toUpperCase())) return errors;
+  for (let i = 1; i + 2 < tokens.length; i++) {
+    const [w, a, b] = [tokens[i], tokens[i + 1], tokens[i + 2]];
+    if (w.type !== TokenType.GCodeWord) continue;
+    if ((a.type === TokenType.Minus || a.type === TokenType.Plus) && b.type === TokenType.LBrace) {
+      const letter = w.value.toUpperCase();
+      errors.push({
+        message: `'${letter}${a.value}{…}' is not a number: the firmware only evaluates a value that starts with '{', ` +
+          `so it stops with "expected number after '${letter}'" — write ${letter}{${a.value}…}`,
+        start: w.start, end: b.end, line: w.line,
+      });
+    } else if (a.type === TokenType.StringLit && b.type === TokenType.Caret) {
+      const letter = w.value.toUpperCase();
+      errors.push({
+        severity: 'warning',
+        message: `'^' after the quoted value of ${letter} is not part of it: the firmware takes only ${a.value} ` +
+          `as the value — write ${letter}{${a.value} ^ …}`,
+        start: b.start, end: b.end, line: b.line,
+      });
+    }
+  }
+  return errors;
+}
 
 function checkDeclaredVars(
   tokens: Token[],
