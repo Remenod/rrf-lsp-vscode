@@ -3,7 +3,8 @@
 import { Hover, MarkupKind } from 'vscode-languageserver/node';
 import { Token, TokenType } from '../parser/types';
 import { SymbolTable } from './symbolTable';
-import { isValidOmPath, getOmPathInfo, isOmIndexAvailable } from './objectModelIndex';
+import { isValidOmPath, getOmPathInfo, isOmIndexAvailable, OmTarget } from './objectModelIndex';
+import { typeAtPosition, globalType, displayType } from './typecheck';
 
 interface GCodeDoc { title: string; description: string; anchor?: string }
 type DocDB = Record<string, GCodeDoc>;
@@ -25,10 +26,19 @@ export function buildHover(
     // a var whose block already ended reports it as undeclared (matching the
     // diagnostics) instead of pointing at the dead declaration.
     docLines?: string[],
+    /** Firmware line and SBC setting for object-model paths. */
+    omTarget?: OmTarget,
 ): Hover | null {
     const tokIdx = tokens.findIndex(t => t.start <= character && character < t.end);
     if (tokIdx === -1) return null;
     const tok = tokens[tokIdx];
+
+    // Inferred type at this exact position (flow-sensitive), as shown in the `Type:` field.
+    const lines = docLines ?? symbolTable.getText(uri)?.split(/\r?\n/);
+    const inferred = (fallback: string | undefined): string => {
+        const t = lines ? typeAtPosition(symbolTable, uri, lines, lineNum, tok.start) : undefined;
+        return t !== undefined ? displayType(t) : fallback ?? 'unknown';
+    };
 
     const formatHoverWithAnchor = (title: string, data: GCodeDoc, baseUrl: string = META_DOCS_URL): Hover => {
         const anchorLink = data.anchor ? `\n\n[Documentation](${baseUrl}${data.anchor})` : '';
@@ -61,7 +71,7 @@ export function buildHover(
             if (tokIdx > 0 && tokens[tokIdx - 1]?.type === TokenType.Dot) {
                 // Treat as an OM field — reconstruct path
                 const fullPath = reconstructOmPath(tokens, tokIdx);
-                return buildOmHover(fullPath);
+                return buildOmHover(fullPath, omTarget);
             }
             const data = functionsData[tok.value.toLowerCase()];
             if (!data) return mkHover(`**${tok.value}()**\n\n*No documentation found.*`);
@@ -113,7 +123,7 @@ export function buildHover(
                     const decl = symbolTable.lookupVarAtLine(val, uri, lineNum, lineIndent, docLines);
                     if (decl) {
                         return mkHover(
-                            `**var.${val}**\n\nScope: \`var\` · Type: \`${decl.inferredType ?? 'unknown'}\` · Declared at line ${decl.line + 1} (indent ${decl.indent})`
+                            `**var.${val}**\n\nScope: \`var\` · Type: \`${inferred(decl.inferredType)}\` · Declared at line ${decl.line + 1} (indent ${decl.indent})`
                         );
                     }
                     return mkHover(`**var.${val}**\n\nScope: \`var\` · Declaration`);
@@ -122,7 +132,7 @@ export function buildHover(
                     const decl = symbolTable.lookupGlobal(val);
                     if (decl) {
                         return mkHover(
-                            `**global.${val}**\n\nScope: \`global\` · Type: \`${decl.inferredType ?? 'unknown'}\` · Declared in \`${shortUri(decl.uri)}\` at line ${decl.line + 1}`
+                            `**global.${val}**\n\nScope: \`global\` · Type: \`${displayType(globalType(symbolTable, val))}\` · Declared in \`${shortUri(decl.uri)}\` at line ${decl.line + 1}`
                         );
                     }
                     return mkHover(`**global.${val}**\n\nScope: \`global\` · Declaration`);
@@ -136,7 +146,7 @@ export function buildHover(
                     return mkHover(`**${val}**\n\n⚠️ *Undeclared variable — no \`var ${name} = ...\` found in scope.*`);
                 }
                 return mkHover(
-                    `**${val}**\n\nScope: \`var\` · Type: \`${decl.inferredType ?? 'unknown'}\` · Declared at line ${decl.line + 1} (indent ${decl.indent})`
+                    `**${val}**\n\nScope: \`var\` · Type: \`${inferred(decl.inferredType)}\` · Declared at line ${decl.line + 1} (indent ${decl.indent})`
                 );
             }
 
@@ -145,18 +155,18 @@ export function buildHover(
                 const decl = symbolTable.lookupGlobal(name);
                 if (!decl) {
                     return mkHover(
-                        `**${val}**\n\n*Not declared in any open file — may be declared in a closed macro or created at runtime.*`
+                        `**${val}**\n\nType: \`unknown\` · *Not declared in any open file — may be declared in a closed macro or created at runtime.*`
                     );
                 }
                 return mkHover(
-                    `**${val}**\n\nScope: \`global\` · Type: \`${decl.inferredType ?? 'unknown'}\` · Declared in \`${shortUri(decl.uri)}\` at line ${decl.line + 1}`
+                    `**${val}**\n\nScope: \`global\` · Type: \`${inferred(displayType(globalType(symbolTable, name)))}\` · Declared in \`${shortUri(decl.uri)}\` at line ${decl.line + 1}`
                 );
             }
 
             if (val.startsWith('param.')) {
                 const name = val.slice(6);
                 return mkHover(
-                    `**${val}**\n\nMacro parameter — value passed by the caller via a G-code word.\n\n` +
+                    `**${val}**\n\nMacro parameter · Type: \`unknown\` — value passed by the caller via a G-code word.\n\n` +
                     `*Example:* \`M98 P"${shortUri(uri)}" ${name.toUpperCase()}10\` → \`param.${name.toLowerCase()}\` = 10\n\n` +
                     `⚠️ *Macro parameters cannot be renamed — the letter is determined by the G-code word at the call site.*`
                 );
@@ -164,7 +174,7 @@ export function buildHover(
 
             // Bare identifier — reconstruct the full OM path from token context
             const fullPath = reconstructOmPath(tokens, tokIdx);
-            return buildOmHover(fullPath);
+            return buildOmHover(fullPath, omTarget);
         }
 
         // ── Operators ─────────────────────────────────────────────────────────
@@ -251,7 +261,7 @@ function reconstructOmPath(tokens: Token[], tokIdx: number): string {
 }
 
 // ── Object Model hover ────────────────────────────────────────────────────────
-function buildOmHover(path: string): Hover {
+function buildOmHover(path: string, omTarget?: OmTarget): Hover {
     const omRef = '\n\nSee [Object Model reference](https://github.com/Duet3D/RepRapFirmware/wiki/Object-Model-Reference).';
     // Normalise [n] → [] for lookup
     const normPath = path.replace(/\[\d+\]/g, '[]');
@@ -260,9 +270,9 @@ function buildOmHover(path: string): Hover {
         return mkHover(`**${path}**\n\nObject Model path — resolved at runtime by RepRapFirmware.${omRef}`);
     }
 
-    if (isValidOmPath(normPath)) {
-        const info = getOmPathInfo(normPath);
-        const typeStr = info ? ` · Type: \`${info.type}${info.isArray ? '[]' : ''}\`` : '';
+    if (isValidOmPath(normPath, omTarget)) {
+        const info = getOmPathInfo(normPath, omTarget);
+        const typeStr = info ? ` · Type: \`${info.type.split('|').join(' | ')}\`` : '';
         return mkHover(`**${path}**\n\nObject Model path${typeStr}${omRef}`);
     }
 

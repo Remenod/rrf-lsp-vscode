@@ -5,3 +5,4 @@ client/server
 tsconfig.tsbuildinfo
 .vscode
 *.vsix
+out-test

@@ -4,7 +4,7 @@
   "description": "Language support, hover documentation and more for RepRapFirmware (Duet3D) G-code files.",
   "author": "remenod",
   "license": "LGPL-3.0-or-later",
-  "version": "2.1.1",
+  "version": "3.0.0",
   "publisher": "remenod",
   "icon": "icon.png",
   "categories": [
@@ -25,7 +25,6 @@
     "cnc"
   ],
   "activationEvents": [
-    "onLanguage:rrf-gcode",
     "onLanguage:gcode"
   ],
   "main": "./client/out/extension.js",
@@ -77,6 +76,33 @@
           "default": 255,
           "minimum": 0,
           "markdownDescription": "Report an error when a command exceeds this many bytes. Only the command part counts — indentation, `N` line numbers, `*` checksums and `;` comments are excluded, because RepRapFirmware never stores them in its G-code input buffer.\n\nThe default matches current firmware (256-byte buffer including the terminator → 255 usable bytes). Older RRF 3.0–3.3 builds only accept 100–160 bytes, so lower the limit if you target them.\n\nSet to `0` to disable the check."
+        },
+        "rrfgcode.typeCheck.enabled": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Report expressions that RepRapFirmware would reject at runtime because of their types — `\"a\" + 1`, `if 1`, `abs(\"x\")`, indexing a number, and so on. Only definite errors are reported: when any possible type of an operand works, nothing is shown."
+        },
+        "rrfgcode.sbc": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "The printer runs with a single-board computer (DuetSoftwareFramework). Its object-model fields (`sbc`, `plugins`, `job.layers`, …) are then known; without one they do not exist and are reported as unknown paths."
+        },
+        "rrfgcode.rrfVersion": {
+          "type": "string",
+          "default": "",
+          "enum": [
+            "",
+            "3.5",
+            "3.6",
+            "3.7"
+          ],
+          "enumDescriptions": [
+            "No target: everything the newest firmware knows is accepted",
+            "RepRapFirmware 3.5, latest release",
+            "RepRapFirmware 3.6, latest release",
+            "RepRapFirmware 3.7, latest release"
+          ],
+          "markdownDescription": "Target RepRapFirmware line. Functions added later (`round`, `take`, `drop`, `find`, `square` need 3.6) are reported as unknown on an older line."
         }
       }
     }
@@ -94,7 +120,6 @@
     "typescript": "^5.0.0"
   },
   "dependencies": {
-    "@duet3d/objectmodel": "^3.6.2",
     "vscode-languageserver": "^9.0.1",
     "vscode-languageserver-textdocument": "^1.0.12",
     "vscode-uri": "^3.1.0"

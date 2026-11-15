@@ -17,8 +17,6 @@ import {
   SignatureHelp,
   SignatureInformation,
   ParameterInformation,
-  DiagnosticSeverity,
-  Diagnostic,
   SemanticTokensParams,
   SemanticTokens,
   SemanticTokensBuilder,
@@ -31,7 +29,6 @@ import {
   ReferenceParams,
   ResponseError,
   WorkspaceEdit,
-  TextEdit,
   CodeAction,
   CodeActionKind,
   CodeActionParams,
@@ -53,24 +50,26 @@ import {
   NAMED_CONSTANTS,
   SEMANTIC_TOKEN_TYPES, SEMANTIC_TOKEN_MODIFIERS,
 } from './parser/types';
-import { validateLine, DiagnosticContext } from './parser/expression';
 import { SymbolTable } from './analysis/symbolTable';
 import { buildHover } from './analysis/hover';
-import { isValidOmPath, isOmIndexAvailable, allOmPaths } from './analysis/objectModelIndex';
+import { isOmIndexAvailable, allOmPaths } from './analysis/objectModelIndex';
 import { buildRenameEdit } from './analysis/rename';
 import { buildReferences } from './analysis/references';
 import { findPathStringContext, buildPathCompletions } from './analysis/pathCompletion';
 import {
-  validateGCodeArgs, validateFunctionPathArgs, getSdRootForUri, invalidateSdRootCache,
+  invalidateSdRootCache,
 } from './analysis/argValidators';
 import {
   ArgCheckConfig, defaultArgCheckConfig, normaliseArgCheckConfig,
 } from './analysis/argCheckConfig';
 import {
-  buildCodeActions, CMD_ADD_PATH_IGNORE, CMD_SET_MAX_LINE_LENGTH, LINE_TOO_LONG_CODE,
+  buildCodeActions, CMD_ADD_PATH_IGNORE, CMD_SET_MAX_LINE_LENGTH,
 } from './analysis/codeActions';
 import { pathLocationAtCursor } from './analysis/pathDefinition';
 import { lineIndent, findTokenAtChar } from './analysis/utils';
+import { computeDiagnostics } from './analysis/diagnostics';
+import { globalTypesSignature } from './analysis/typecheck';
+import { mayBeRrfFile, isRrfFile, collectRrfFiles as collectRrfFilesUnder } from './analysis/rrfFiles';
 
 // ── Connection setup ──────────────────────────────────────────────────────────
 const connection = createConnection(ProposedFeatures.all);
@@ -106,46 +105,6 @@ const gcodeData: DocDB = loadJson('../data/gcode-commands.json', 'G-code diction
 const metaData: DocDB = loadJson('../data/gcode-meta-commands.json', 'meta-commands dictionary');
 const operatorsData: DocDB = loadJson('../data/gcode-operators.json', 'operators dictionary');
 const functionsData: DocDB = loadJson('../data/gcode-functions.json', 'functions dictionary');
-
-// ── File detection ─────────────────────────────────────────────────────────────
-//
-// Compared case-insensitively (extensions are lower-cased before lookup) and
-// aligned with the language registration in package.json (.g/.gcode/.gc/.gco).
-const RRF_EXTENSIONS = new Set(['.g', '.gcode', '.gc', '.gco', '.macro', '.cfg']);
-
-// Extensions that other ecosystems use too (e.g. Klipper's printer.cfg), so a
-// file only counts as RRF G-code when its content also looks like it.
-const SNIFFED_EXTENSIONS = new Set(['.cfg', '.macro']);
-
-/**
- * Returns true if `text` looks like RRF G-code / meta-command content.
- *
- * Used to classify files without a registered extension (e.g. `homedelta`,
- * `bed.g.bak`, or completely extensionless macros dropped in sys/).
- *
- * Heuristic: sample the first 30 non-blank lines; if ≥ 20 % of them start
- * with a recognisable G-code or meta-command pattern we treat the file as
- * RRF G-code.
- */
-function looksLikeGCode(text: string): boolean {
-  const checked = text
-    .split(/\r?\n/)
-    .map(l => l.trim())
-    .filter(l => l.length > 0)
-    .slice(0, 30);
-
-  if (checked.length === 0) return false;
-
-  let hits = 0;
-  for (const line of checked) {
-    if (/^;/.test(line)) { hits++; continue; }                         // comment
-    if (/^[GMTgmt]\d/.test(line)) { hits++; continue; }                // G/M/T code
-    if (/^(var|global|set|if|elif|else|while|break|continue|abort|param|echo|skip)\b/i
-      .test(line)) { hits++; continue; }                               // meta command
-  }
-
-  return hits >= Math.max(2, Math.floor(checked.length * 0.2));
-}
 
 // ── Initialize ────────────────────────────────────────────────────────────────
 connection.onInitialize((_params: InitializeParams): InitializeResult => {
@@ -214,6 +173,9 @@ connection.onInitialized(async () => {
   } catch (e) {
     connection.console.warn(`RRF LSP: workspace scan failed: ${e}`);
   }
+  // Documents opened before the scan finished were typed against an
+  // incomplete set of global assignments.
+  for (const doc of documents.all()) publishDiagnostics(doc);
 });
 
 // ── Configuration ────────────────────────────────────────────────────────────
@@ -233,7 +195,13 @@ const DEFAULT_MAX_LINE_LENGTH = 255;
 
 let argCheckConfig: ArgCheckConfig = defaultArgCheckConfig();
 let maxLineLength = DEFAULT_MAX_LINE_LENGTH;
+let typeCheckEnabled = true;
+let rrfVersion = '';
+let sbc = false;
 let configLoaded = false;
+
+/** Firmware line and SBC setting for object-model paths and types. */
+const omTarget = () => ({ version: rrfVersion, sbc });
 
 function normaliseMaxLineLength(raw: unknown): number {
   if (typeof raw === 'number' && Number.isFinite(raw) && raw >= 0) return Math.floor(raw);
@@ -242,15 +210,24 @@ function normaliseMaxLineLength(raw: unknown): number {
 
 async function refreshConfig(): Promise<void> {
   try {
-    const [argRaw, maxRaw] = await Promise.all([
+    const [argRaw, maxRaw, typeCheckRaw, versionRaw, sbcRaw] = await Promise.all([
       connection.workspace.getConfiguration('rrfgcode.argCheck'),
       connection.workspace.getConfiguration('rrfgcode.maxLineLength'),
+      connection.workspace.getConfiguration('rrfgcode.typeCheck'),
+      connection.workspace.getConfiguration('rrfgcode.rrfVersion'),
+      connection.workspace.getConfiguration('rrfgcode.sbc'),
     ]);
     argCheckConfig = normaliseArgCheckConfig(argRaw);
     maxLineLength = normaliseMaxLineLength(maxRaw);
+    typeCheckEnabled = (typeCheckRaw as { enabled?: unknown } | null)?.enabled !== false;
+    rrfVersion = typeof versionRaw === 'string' ? versionRaw : '';
+    sbc = sbcRaw === true;
   } catch {
     argCheckConfig = defaultArgCheckConfig();
     maxLineLength = DEFAULT_MAX_LINE_LENGTH;
+    typeCheckEnabled = true;
+    rrfVersion = '';
+    sbc = false;
   }
   configLoaded = true;
 }
@@ -296,45 +273,7 @@ const backgroundDiagnosticUris = new Set<string>();
 
 /** Collect all RRF files under `dir` that are not already open. */
 function collectRrfFiles(dir: string): Array<{ uri: string; content: string }> {
-  const results: Array<{ uri: string; content: string }> = [];
-  let entries: fs.Dirent[];
-  try { entries = fs.readdirSync(dir, { withFileTypes: true }); }
-  catch { return results; }
-
-  for (const entry of entries) {
-    if (entry.name.startsWith('.') || entry.name === 'node_modules') continue;
-    const fullPath = path.join(dir, entry.name);
-    if (entry.isDirectory()) {
-      results.push(...collectRrfFiles(fullPath));
-      continue;
-    }
-
-    const ext = path.extname(entry.name).toLowerCase();
-    const noExt = ext === '';
-
-    // Skip files with non-RRF extensions
-    if (!noExt && !RRF_EXTENSIONS.has(ext)) continue;
-
-    const fileUri = URI.file(fullPath).toString();
-
-    // Already tracked by the documents manager (file is open) — skip;
-    // the open document's diagnostics are handled via onDidOpen / onDidChangeContent.
-    if (documents.get(fileUri)) continue;
-
-    let content: string;
-    try {
-      content = fs.readFileSync(fullPath, 'utf8');
-    } catch {
-      continue;
-    }
-
-    // Extensionless and shared-extension files (.cfg/.macro) must also LOOK
-    // like RRF G-code, so e.g. a Klipper printer.cfg is not indexed.
-    if ((noExt || SNIFFED_EXTENSIONS.has(ext)) && !looksLikeGCode(content)) continue;
-
-    results.push({ uri: fileUri, content });
-  }
-  return results;
+  return collectRrfFilesUnder(dir, uri => documents.get(uri) !== undefined);
 }
 
 function scanDirectoryForGlobals(dir: string): void {
@@ -359,10 +298,12 @@ documents.onDidOpen(e => onDocumentChange(e.document));
 documents.onDidChangeContent(e => onDocumentChange(e.document));
 documents.onDidClose((e: TextDocumentChangeEvent<TextDocument>) => {
   const filePath = URI.parse(e.document.uri).fsPath;
+  const globalsBefore = globalTypesSignature(symbolTable);
   try {
     if (fs.existsSync(filePath)) {
       const text = fs.readFileSync(filePath, 'utf8');
       symbolTable.indexDocument(e.document.uri, text);
+      refreshIfGlobalsChanged(globalsBefore, e.document.uri);
       // Re-publish diagnostics from the saved file so the Problems panel stays
       // accurate even after the editor tab is closed.
       backgroundDiagnosticUris.add(e.document.uri);
@@ -403,9 +344,9 @@ connection.onDidChangeWatchedFiles((params: DidChangeWatchedFilesParams) => {
     // as the startup scan for shared extensions.
     try {
       const fsPath = URI.parse(uri).fsPath;
-      const ext = path.extname(fsPath).toLowerCase();
+      if (!mayBeRrfFile(fsPath)) continue;
       const content = fs.readFileSync(fsPath, 'utf8');
-      if ((ext === '' || SNIFFED_EXTENSIONS.has(ext)) && !looksLikeGCode(content)) continue;
+      if (!isRrfFile(fsPath, content)) continue;
       symbolTable.indexDocument(uri, content);
       backgroundDiagnosticUris.add(uri);
       publishDiagnosticsForText(uri, content);
@@ -421,15 +362,42 @@ connection.onDidChangeWatchedFiles((params: DidChangeWatchedFilesParams) => {
 });
 
 function onDocumentChange(doc: TextDocument): void {
+  const globalsBefore = globalTypesSignature(symbolTable);
   symbolTable.indexDocument(doc.uri, doc.getText());
+  const publish = () => {
+    publishDiagnostics(doc);
+    refreshIfGlobalsChanged(globalsBefore, doc.uri);
+  };
   // Lazy first-load of config so diagnostics on the very first opened
   // document reflect user settings, not just defaults.  Subsequent changes
   // are pushed by didChangeConfiguration.
   if (!configLoaded) {
-    refreshConfig().then(() => publishDiagnostics(doc));
+    refreshConfig().then(publish);
   } else {
-    publishDiagnostics(doc);
+    publish();
   }
+}
+
+// ── Cross-file type refresh ───────────────────────────────────────────────────
+//
+// Global types are inferred from every file, so an edit in one file can change
+// type diagnostics in others.  Open documents are refreshed at once; closed
+// files with published diagnostics shortly after the edits stop.
+const BACKGROUND_REFRESH_DELAY_MS = 1500;
+let backgroundRefresh: ReturnType<typeof setTimeout> | undefined;
+
+function refreshIfGlobalsChanged(before: string, changedUri: string): void {
+  if (globalTypesSignature(symbolTable) === before) return;
+  for (const doc of documents.all()) if (doc.uri !== changedUri) publishDiagnostics(doc);
+  if (backgroundRefresh) clearTimeout(backgroundRefresh);
+  backgroundRefresh = setTimeout(() => {
+    backgroundRefresh = undefined;
+    for (const uri of backgroundDiagnosticUris) {
+      if (documents.get(uri)) continue;
+      const text = symbolTable.getText(uri);
+      if (text !== undefined) publishDiagnosticsForText(uri, text);
+    }
+  }, BACKGROUND_REFRESH_DELAY_MS);
 }
 
 // ── All-docs helper ───────────────────────────────────────────────────────────
@@ -461,42 +429,6 @@ function getAllDocTexts(): Map<string, string> {
 
 // ── Diagnostics ───────────────────────────────────────────────────────────────
 
-interface CommandPart { text: string; start: number; end: number }
-
-/**
- * Extract the part of a line that actually lands in the firmware's G-code
- * buffer: strips leading whitespace, an `N<digits>` line number, a trailing
- * `*<digits>` checksum and everything from an unquoted `;` on.  Returns null
- * for blank and comment-only lines.
- */
-function commandPartOfLine(lineText: string): CommandPart | null {
-  // Comment start: the first ';' outside a "…" string.  A doubled "" escape
-  // toggles the string state twice, so the tracking stays correct.
-  let inString = false;
-  let end = lineText.length;
-  for (let i = 0; i < lineText.length; i++) {
-    const c = lineText[i];
-    if (c === '"') inString = !inString;
-    else if (c === ';' && !inString) { end = i; break; }
-  }
-
-  let start = 0;
-  while (start < end && (lineText[start] === ' ' || lineText[start] === '\t')) start++;
-
-  const lineNumber = /^[Nn]\d+[ \t]*/.exec(lineText.slice(start, end));
-  if (lineNumber) start += lineNumber[0].length;
-
-  while (end > start && (lineText[end - 1] === ' ' || lineText[end - 1] === '\t')) end--;
-  const checksum = /\*\d+$/.exec(lineText.slice(start, end));
-  if (checksum) {
-    end -= checksum[0].length;
-    while (end > start && (lineText[end - 1] === ' ' || lineText[end - 1] === '\t')) end--;
-  }
-
-  if (end <= start) return null;
-  return { text: lineText.slice(start, end), start, end };
-}
-
 /** Publish diagnostics for an open TextDocument. */
 function publishDiagnostics(doc: TextDocument): void {
   publishDiagnosticsForText(doc.uri, doc.getText());
@@ -505,100 +437,15 @@ function publishDiagnostics(doc: TextDocument): void {
 /**
  * Compute and publish diagnostics for any URI + text pair.
  *
- * Factored out of publishDiagnostics so it can be called for background
- * (non-open) files discovered during the workspace scan.
+ * Also used for background (non-open) files discovered during the workspace scan.
  */
 function publishDiagnosticsForText(uri: string, text: string): void {
-  const lines = text.split(/\r?\n/);
-  const diagnostics: Diagnostic[] = [];
-
-  const omChecker = isOmIndexAvailable() ? isValidOmPath : undefined;
-
-  // Resolve the SD root once per document.  validateGCodeArgs reuses this
-  // for every G/M/T line so we don't repeatedly walk the filesystem.
-  const sdRoot = getSdRootForUri(uri);
-
-  for (let i = 0; i < lines.length; i++) {
-    const lineText = lines[i];
-
-    // Line-length check runs before tokenization so it is reported even for
-    // lines that also contain lexer errors.  Only the command part is measured
-    // (in UTF-8 bytes, matching the firmware buffer) — comments, indentation,
-    // N line numbers and *checksums are excluded because the firmware never
-    // stores them.
-    if (maxLineLength > 0) {
-      const part = commandPartOfLine(lineText);
-      const bytes = part ? Buffer.byteLength(part.text, 'utf8') : 0;
-      if (part && bytes > maxLineLength) {
-        // Column where the byte budget runs out (the range is expressed in
-        // UTF-16 columns even though the limit is measured in UTF-8 bytes).
-        let overflowCol = part.start;
-        let used = 0;
-        for (const ch of part.text) {
-          used += Buffer.byteLength(ch, 'utf8');
-          if (used > maxLineLength) break;
-          overflowCol += ch.length;
-        }
-        diagnostics.push({
-          severity: DiagnosticSeverity.Error,
-          range: mkRange(i, overflowCol, i, part.end),
-          message:
-            `Command is ${bytes} bytes long, exceeding rrfgcode.maxLineLength (${maxLineLength}). ` +
-            `RepRapFirmware rejects commands longer than its input buffer with "GCode command too long".`,
-          source: 'rrf-gcode',
-          code: LINE_TOO_LONG_CODE,
-          data: { length: bytes, max: maxLineLength },
-        });
-      }
-    }
-
-    const indent = lineIndent(lineText);
-    const lexer = new Lexer(lineText, i);
-    const tokens = lexer.tokenize();
-
-    for (const e of lexer.errors) {
-      diagnostics.push({
-        severity: DiagnosticSeverity.Error,
-        range: mkRange(e.line, e.start, e.line, e.end),
-        message: e.message,
-        source: 'rrf-gcode',
-      });
-    }
-
-    if (lexer.errors.length > 0) continue;
-
-    const ctx: DiagnosticContext = {
-      symbolTable, uri, line: i, indent,
-      isValidOmPath: omChecker,
-      docLines: lines,
-    };
-
-    for (const err of validateLine(tokens, lineText, ctx)) {
-      const sev = err.severity === 'warning' ? DiagnosticSeverity.Warning
-        : err.severity === 'information' ? DiagnosticSeverity.Information
-          : DiagnosticSeverity.Error;
-      diagnostics.push({
-        severity: sev,
-        range: mkRange(err.line, err.start, err.line, err.end),
-        message: err.message,
-        source: 'rrf-gcode',
-      });
-    }
-
-    diagnostics.push(...validateGCodeArgs(
-      tokens,
-      lineText,
-      uri,
-      sdRoot,
-      argCheckConfig,
-    ));
-
-    // Path-taking functions (fileexists/fileread) can appear on any line, not
-    // just G/M/T command lines, so they are validated separately.
-    diagnostics.push(...validateFunctionPathArgs(tokens, sdRoot, argCheckConfig));
-  }
-
-  connection.sendDiagnostics({ uri, diagnostics });
+  connection.sendDiagnostics({
+    uri,
+    diagnostics: computeDiagnostics(uri, text, {
+      symbolTable, argCheckConfig, maxLineLength, typeCheck: { enabled: typeCheckEnabled }, rrfVersion, sbc,
+    }),
+  });
 }
 
 // ── Hover ─────────────────────────────────────────────────────────────────────
@@ -624,6 +471,7 @@ connection.onHover((params: HoverParams): Hover | null => {
     params.textDocument.uri,
     lineIndent(line),
     lines,
+    omTarget(),
   );
 });
 
@@ -982,7 +830,7 @@ connection.onCompletion((params: CompletionParams): CompletionItem[] => {
     const items: CompletionItem[] = [];
     const seen = new Set<string>();
 
-    for (const info of allOmPaths()) {
+    for (const info of allOmPaths(omTarget())) {
       if (!info.path.startsWith(omPrefixWithDot)) continue;
       const rest = info.path.slice(omPrefixWithDot.length);
       const segment = rest.split('.')[0].replace(/\[\]$/, '');
@@ -992,7 +840,7 @@ connection.onCompletion((params: CompletionParams): CompletionItem[] => {
         label: segment,
         insertText: segment,
         kind: info.isArray ? CompletionItemKind.Field : CompletionItemKind.Property,
-        detail: `${omPrefixWithDot}${segment}${info.isArray ? '[]' : ''} (${info.type})`,
+        detail: `${omPrefixWithDot}${segment}${info.isArray ? '[]' : ''} (${info.type.split('|').join(' | ')})`,
       });
     }
     if (items.length > 0) return items;
@@ -1061,7 +909,7 @@ connection.onCompletion((params: CompletionParams): CompletionItem[] => {
   }
   if (isOmIndexAvailable()) {
     const seen = new Set<string>();
-    for (const info of allOmPaths()) {
+    for (const info of allOmPaths(omTarget())) {
       const top = info.path.split('.')[0];
       if (seen.has(top)) continue;
       seen.add(top);
@@ -1402,10 +1250,6 @@ function styleFor(
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
-function mkRange(sl: number, sc: number, el: number, ec: number): Range {
-  return { start: { line: sl, character: sc }, end: { line: el, character: ec } };
-}
-
 function metaInsertText(name: string): string {
   switch (name) {
     case 'if': return 'if $1';

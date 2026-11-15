@@ -277,7 +277,11 @@ export class ExpressionValidator {
           return;
         }
 
-        if (this.isAlpha(operand)) {
+        // '#' written before a function call is legal: the firmware ignores it
+        // (the type checker warns that it has no effect).
+        if (operand.type === TokenType.FunctionName) {
+          this.parseFunctionCall(operand);
+        } else if (this.isAlpha(operand)) {
           this.parseIdentifierExpression();
         } else {
           // String literal, '(', '[', or '{'
@@ -290,7 +294,7 @@ export class ExpressionValidator {
       case TokenType.LParen:
         this.advance();
         this.parseInternal(0);
-        this.expect(TokenType.RParen, "expected ')'");
+        if (this.expect(TokenType.RParen, "expected ')'")) this.parseBracketIndexes();
         return;
 
       // ── Array / object literal  { a, b, c } ──────────────────────────────
@@ -302,7 +306,7 @@ export class ExpressionValidator {
           if (this.current().type === TokenType.RBrace) break;
           this.parseInternal(0);
         }
-        this.expect(TokenType.RBrace, "expected '}'");
+        if (this.expect(TokenType.RBrace, "expected '}'")) this.parseBracketIndexes();
         return;
 
       // ── Array subscript  [ expr ] ─────────────────────────────────────────
@@ -411,7 +415,26 @@ export class ExpressionValidator {
     }
 
     this.expect(TokenType.RParen, `expected ')' after arguments to '${funcName}'`);
+    if (this.current().type === TokenType.LBracket) {
+      // ExpressionParser cannot index a function result: echo/if fail with
+      // "expected ','", and var/set silently drop the index and keep the whole value.
+      this.addError(
+        `the result of '${funcName}(…)' cannot be indexed — assign it to a variable first ` +
+        `(in var/set RepRapFirmware silently drops the index and stores the whole value)`,
+        this.current(),
+      );
+    }
     this.parseTrailingIndexes();
+  }
+
+  // `( … )[i]` and `{ … }[i]`: ParseExpectKet accepts subscripts after a
+  // bracketed expression (no '.field' there).
+  private parseBracketIndexes(): void {
+    while (this.current().type === TokenType.LBracket) {
+      this.advance();
+      this.parseInternal(0);
+      this.expect(TokenType.RBracket, "expected ']'");
+    }
   }
 
   // ── Identifier expression: var.x  global.y  param.z  move.axes… ──────────
@@ -587,7 +610,6 @@ export class ExpressionValidator {
 
 export function validateLine(
   tokens: Token[],
-  lineText: string,
   ctx?: DiagnosticContext,
 ): ParseError[] {
   const errors: ParseError[] = [];
@@ -992,6 +1014,7 @@ export function validateLine(
   if (first.type === TokenType.GCode || first.type === TokenType.TCode) {
     checkAdjacentNumberString(tokens, errors);
     errors.push(...checkDuplicateGCodeParams(tokens));
+    errors.push(...checkParameterValues(tokens));
     if (ctx) errors.push(...checkDeclaredVars(tokens, ctx));
     // {…} blocks hold real expressions — run them through the expression
     // validator so syntax and function-arity errors are reported here just
@@ -1333,6 +1356,39 @@ function checkDuplicateGCodeParams(tokens: Token[]): ParseError[] {
   return errors;
 }
 
+/**
+ * Parameter values the firmware reads differently from how they look:
+ *  * `X-{…}` / `X+{…}`: ReadFloatValue only evaluates an expression when the value starts with `{`;
+ *    here it sees the sign, finds no number and stops with "expected number after 'X'".
+ *  * `P"text" ^ …`: GetQuotedString ends the value at the closing quote, so what follows is not
+ *    part of it.
+ */
+function checkParameterValues(tokens: Token[]): ParseError[] {
+  const errors: ParseError[] = [];
+  const head = tokens[0];
+  if (head && RAW_TEXT_COMMANDS.has(head.value.toUpperCase())) return errors;
+  for (let i = 1; i + 2 < tokens.length; i++) {
+    const [w, a, b] = [tokens[i], tokens[i + 1], tokens[i + 2]];
+    if (w.type !== TokenType.GCodeWord) continue;
+    if ((a.type === TokenType.Minus || a.type === TokenType.Plus) && b.type === TokenType.LBrace) {
+      const letter = w.value.toUpperCase();
+      errors.push({
+        message: `'${letter}${a.value}{…}' is not a number: the firmware only evaluates a value that starts with '{', ` +
+          `so it stops with "expected number after '${letter}'" — write ${letter}{${a.value}…}`,
+        start: w.start, end: b.end, line: w.line,
+      });
+    } else if (a.type === TokenType.StringLit && b.type === TokenType.Caret) {
+      const letter = w.value.toUpperCase();
+      errors.push({
+        severity: 'warning',
+        message: `'^' after the quoted value of ${letter} is not part of it: the firmware takes only ${a.value} ` +
+          `as the value — write ${letter}{${a.value} ^ …}`,
+        start: b.start, end: b.end, line: b.line,
+      });
+    }
+  }
+  return errors;
+}
 
 function checkDeclaredVars(
   tokens: Token[],

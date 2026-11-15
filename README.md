@@ -22,10 +22,14 @@ The extension activates automatically for `.g`, `.gcode`, `.gc` and `.gco` files
 * **Go to Definition (F12)**: Quickly navigate to where variables, macros, object references, or file paths are defined.
 * **Variable Renaming**: Safely rename variables across your G-code files, scoped correctly to the block they were declared in.
 * **Find All References (Shift+F12)**: Locate all occurrences of a variable across the workspace.
-* **Duet3D Object Model Support**: Deep integration with the RRF object model, allowing for accurate references and autocompletion of object model properties.
+* **Duet3D Object Model Support**: Object-model paths are checked, completed and typed (`int`, `float`, `bool`, `string`, …) from RepRapFirmware's own object-model tables, for the line set in `rrfgcode.rrfVersion` (or any of 3.5, 3.6, 3.7 when it is empty). Fields that only exist with a single-board computer are known when `rrfgcode.sbc` is on.
 * **Operators Syntax Check**: Correctly recognizes invalid operator usage patterns.
 * **Scope Check**: Shows diagnostics based on valid variable definition scope — a variable used after its enclosing block has ended is flagged, just as the firmware would reject it at runtime.
 * **Block Structure Check**: Flags orphan `else`/`elif`, `break`/`continue` outside a loop, and `iterations` used outside a loop.
+* **Indentation Check**: Indentation is measured as RepRapFirmware measures it (a space counts 1, a tab moves to the next multiple of 4). Warns where the firmware warns about spaces and tabs mixed in one block, and when an `if`/`elif`/`else`/`while` has nothing indented under it, so the following lines are not part of it (a comment counts as a body).
+* **Parameter Value Check**: `E-{…}` is an error, as in the firmware ("expected number after 'E'"; write `E{-…}`), and `P"text" ^ …` is a warning, because only the quoted text is the value (write `P{"text" ^ …}`).
+* **Macros of any name**: every file in a `macros` folder that looks like G-code is checked, including names with dots such as `Upgrade to 4.0.1`. To also get editor features in such files, associate them with the language, e.g. `"files.associations": { "**/macros/**/*": "rrf-gcode" }`.
+* **Type Check**: Reports expressions RepRapFirmware would reject at runtime because of their types — `"a" + 1`, `if 1`, `abs("x")`, `vector(10 / 2, 0)`, indexing a number, comparing objects — with the firmware's own error text. Types follow variables through `if`/`while`, globals are typed across the workspace (including values persisted with `echo >`), and hover shows the inferred type. Only definite errors are reported. See `rrfgcode.typeCheck.enabled` and `rrfgcode.rrfVersion`.
 * **Path Completion**: Path strings inside supported G-code path parameters and path-taking functions auto-complete to existing files in the current RRF workspace, similar to `#include "..."` in C/C++.
 
 ### Argument Validation & File Path Checking
@@ -89,6 +93,9 @@ Fallback path detection is intentionally conservative. It only treats a string a
 This extension contributes the following settings:
 
 * `rrfgcode.activateOnGenericGcode` (bool, default `true`): Enable LSP features for generic non-RRF G-code files.
+* `rrfgcode.typeCheck.enabled` (bool, default `true`): Report expressions whose types RepRapFirmware would reject at runtime.
+* `rrfgcode.sbc` (bool, default `false`): The printer runs with a single-board computer (DuetSoftwareFramework). Its object-model fields (`sbc`, `plugins`, `job.layers`, …) are then known; without one they are reported as unknown paths.
+* `rrfgcode.rrfVersion` (`""`, `3.5`, `3.6` or `3.7`, default `""`): Target RepRapFirmware line, each meaning its latest release. Functions added later (`round`, `take`, `drop`, `find`, `square` need 3.6) are reported on an older line. Empty accepts everything the newest firmware knows.
 * `rrfgcode.maxLineLength` (integer, default `255`): Report an error when a command exceeds this many bytes. Only the command part counts — indentation, `N` line numbers, `*` checksums and `;` comments are excluded, because RepRapFirmware never stores them in its G-code input buffer. The default matches current firmware (256-byte buffer including the terminator); older RRF 3.0–3.3 builds only accept 100–160 bytes. Set to `0` to disable the check.
 
 ### Argument Validation Settings
@@ -130,7 +137,6 @@ if fileexists("probe.g")     ; resolves under /sys, like M98
 ```gcode
 M98 P"sys/mymacro.g"    ; warns if the file does not exist
 M20 P"0:/gcodes"        ; validates that the directory exists
-M472 P"sys/foobar"      ; validates that the file or directory exists
 ```
 
 ### Command Length Check
@@ -213,7 +219,7 @@ The following commands are currently validated for file-path or directory-path a
 | `M470`   |       `P` | `parent-exists`             | SD root            | Create directory.                                                                  |
 | `M471`   |       `S` | `exists`                    | SD root            | Rename/move source file or directory.                                             |
 | `M471`   |       `T` | `parent-exists`             | SD root            | Rename/move target path.                                                           |
-| `M472`   |       `P` | `exists`                    | SD root            | Delete file or directory.                                                          |
+| `M472`   |       `P` | not flagged                 | SD root            | Delete file or directory; it may already be gone.                                  |
 | `M505`   |       `P` | `directory-exists`          | `/sys`             | Set configuration file folder.                                                     |
 | `M505.1` |       `P` | `directory-exists`          | `/www`             | Set HTTP server root folder.                                                       |
 | `M929`   |       `P` | `parent-exists`             | SD root            | Event log file path.                                                               |
@@ -260,9 +266,36 @@ fileexists("probe.g")     -> <sd-root>/sys/probe.g
 
 Paths containing URLs, backslashes, null bytes, or paths escaping outside the detected SD-card root are rejected by the path resolver.
 
+## Development
+
+```sh
+npm install          # at the repository root; also installs client/ and server/
+cd server && npm test
+```
+
+### Regenerating the object-model data
+
+`server/data/om-3.5.json`, `om-3.6.json` and `om-3.7.json` come from the latest release of each line. With checkouts of RepRapFirmware and DuetSoftwareFramework at matching tags:
+
+```sh
+python3 scripts/om-gen.py --rrf /path/to/RepRapFirmware --dsf /path/to/DuetSoftwareFramework --out server/data/om-3.6.json --report
+```
+
+`--report` prints the object-model table entries the generator could not reach from the root.
+
+### Testing on your own configuration
+
+`npm test` is self-contained. To also lint a real printer configuration, point `RRF_CONFIG_DIR` at any RRF SD-card tree (`sys/`, `macros/`, `filaments/` …) or a repository that holds one:
+
+```sh
+RRF_CONFIG_DIR=/path/to/config npm run test:config
+```
+
+Files are found the way the extension's workspace scan finds them (print jobs under `gcodes/` are skipped), and `rrfgcode.*` settings are read from `<dir>/.vscode/settings.json` when it exists. The run checks that nothing throws, that the configuration has no Error diagnostics, that every G/M code has documentation, and that the type checker adds no diagnostics and removes none. It also lists the warnings by message. A configuration that runs on a printer should pass, so each failure is either a false positive of the extension or a real bug in the configuration. Without `RRF_CONFIG_DIR` these tests are skipped.
+
 ## Known Issues
 
-* **No type checking**: RRF G-code is dynamically typed. The LSP does not perform full static type inference.
+* **Type checking reports definite errors only**: values the server cannot see (macro parameters, `input`, unknown object-model fields) are `unknown`, and an expression is reported only when it fails for every type its operands can have. G-code parameter values (`G1 X{"10"}`) are not type-checked.
 * **Runtime paths are not evaluated**: Expressions such as `P{var.path}` are skipped by design.
 * **Fallback F12 is not a diagnostic source**: Strict fallback path detection is used only for `Go to Definition`; it does not emit "file not found" warnings for arbitrary strings.
 * **Multi-root workspaces**: Settings are read once per server instance rather than per workspace folder, so a setting overridden in one folder of a multi-root workspace is not honored for files in that folder.
@@ -295,3 +328,5 @@ The G-Code documentation data included in this project (`server/data/*`) is deri
 * Original content © Duet3D.
 * Licensed under the [Creative Commons Attribution-ShareAlike 4.0 International (CC BY-SA 4.0)](server/data/LICENSE).
 * The data has been parsed and transformed into JSON format by Remenod.
+
+The object-model data (`server/data/om-*.json`) is generated by `scripts/om-gen.py` from the [RepRapFirmware](https://github.com/Duet3D/RepRapFirmware) sources (GPL-3.0) and, for the fields only a single-board computer provides, the [DuetSoftwareFramework](https://github.com/Duet3D/DuetSoftwareFramework) object model; each file names the releases it was built from.

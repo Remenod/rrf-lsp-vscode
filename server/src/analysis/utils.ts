@@ -6,11 +6,18 @@ import { Token, TokenType } from '../parser/types';
 
 // ── String helpers ─────────────────────────────────────────────────────────────
 
-/** Count leading whitespace characters on a line (spaces or tabs). */
+/**
+ * Block depth of a line as RepRapFirmware counts it (StringParser): a space adds 1, a tab moves
+ * on to the next multiple of 4. Only meaningful for comparing lines, not as a column.
+ */
 export function lineIndent(line: string): number {
-    let i = 0;
-    while (i < line.length && (line[i] === ' ' || line[i] === '\t')) i++;
-    return i;
+    let n = 0;
+    for (let i = 0; i < line.length; i++) {
+        if (line[i] === ' ') n++;
+        else if (line[i] === '\t') n = (n + 4) & ~3;
+        else break;
+    }
+    return n;
 }
 
 // ── Token helpers ──────────────────────────────────────────────────────────────

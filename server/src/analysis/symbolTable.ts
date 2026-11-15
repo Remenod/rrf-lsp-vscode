@@ -3,6 +3,9 @@
 import { Token, TokenType } from '../parser/types';
 import { Lexer } from '../parser/lexer';
 import { lineIndent } from './utils';
+import { parseExpression } from './typecheck/ast';
+import { Typer } from './typecheck/infer';
+import { UNKNOWN, coarse } from './typecheck/types';
 
 export type VarScope = 'var' | 'global' | 'param';
 
@@ -13,7 +16,8 @@ export interface VariableDecl {
     line: number;
     col: number;
     indent: number;
-    inferredType?: string;   // 'int' | 'float' | 'bool' | 'string' | 'array' | 'unknown'
+    /** Type of the initialiser on its own (no flow): 'int', 'float', 'int | string', 'array', 'unknown', … */
+    inferredType?: string;
 }
 
 export class SymbolTable {
@@ -29,9 +33,35 @@ export class SymbolTable {
     // All URIs ever indexed (for workspace-wide searches)
     private allUris = new Set<string>();
 
+    // Indexed texts, for analyses that need whole documents (workspace global types).
+    private texts = new Map<string, string>();
+
+    // Bumped on every change, so derived caches know when they are stale.
+    private _generation = 0;
+
+    get generation(): number {
+        return this._generation;
+    }
+
+    /** Text of every indexed document, in indexing order. */
+    getIndexedTexts(): ReadonlyMap<string, string> {
+        return this.texts;
+    }
+
+    getText(uri: string): string | undefined {
+        return this.texts.get(uri);
+    }
+
+    /** Names of all declared globals. */
+    getGlobalNames(): string[] {
+        return [...this.globals.keys()];
+    }
+
     // ── Scan a whole document ─────────────────────────────────────────────────
     indexDocument(uri: string, text: string): void {
         this.allUris.add(uri);
+        this.texts.set(uri, text);
+        this._generation++;
 
         // Clear old entries for this document
         this.locals.set(uri, new Map());
@@ -48,7 +78,6 @@ export class SymbolTable {
         }
 
         const localMap = this.locals.get(uri)!;
-        const paramMap = this.params.get(uri)!;
 
         const lines = text.split(/\r?\n/);
         for (let i = 0; i < lines.length; i++) {
@@ -69,7 +98,7 @@ export class SymbolTable {
                     line: i,
                     col: nameTok.start,
                     indent,
-                    inferredType: inferTypeFromTokens(tokens, 3),
+                    inferredType: inferTypeFromTokens(tokens, 3, line),
                 };
                 const list = localMap.get(nameTok.value) ?? [];
                 list.push(decl);
@@ -86,7 +115,7 @@ export class SymbolTable {
                     line: i,
                     col: nameTok.start,
                     indent,
-                    inferredType: inferTypeFromTokens(tokens, 3),
+                    inferredType: inferTypeFromTokens(tokens, 3, line),
                 };
                 const existing = this.globals.get(nameTok.value) ?? [];
                 existing.push(decl);
@@ -99,6 +128,8 @@ export class SymbolTable {
     // ── Remove document ───────────────────────────────────────────────────────
     removeDocument(uri: string): void {
         this.allUris.delete(uri);
+        this.texts.delete(uri);
+        this._generation++;
         this.locals.delete(uri);
         this.params.delete(uri);
         for (const [name, decls] of this.globals) {
@@ -299,21 +330,14 @@ export class SymbolTable {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function inferTypeFromTokens(tokens: Token[], startIdx: number): string {
-    const t = tokens[startIdx];
-    if (!t || t.type === TokenType.EOF) return 'unknown';
-
-    switch (t.type) {
-        case TokenType.Integer:
-        case TokenType.HexInteger:
-        case TokenType.BinInteger: return 'int';
-        case TokenType.Float: return 'float';
-        case TokenType.StringLit: return 'string';
-        case TokenType.CharLit: return 'char';
-        case TokenType.True:
-        case TokenType.False: return 'bool';
-        case TokenType.LBracket:
-        case TokenType.LBrace: return 'array';
-        default: return 'unknown';
-    }
+/**
+ * Type of an initialiser taken on its own: references to other variables are
+ * `unknown` here (hover shows the flow-sensitive type instead).
+ */
+function inferTypeFromTokens(tokens: Token[], startIdx: number, lineText: string): string {
+    const node = parseExpression(tokens.slice(startIdx));
+    if (!node) return 'unknown';
+    const r = new Typer({ line: 0, lineText, version: null, report: null, record: null })
+        .infer(node, { local: () => undefined, global: () => UNKNOWN });
+    return r.failed ? 'unknown' : coarse(r.t);
 }
