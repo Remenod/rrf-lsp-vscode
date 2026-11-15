@@ -1,7 +1,7 @@
 // analysis/typecheck/infer.ts
 // Types one expression tree and reports the errors the firmware would raise.
 //
-// Transcribed from RepRapFirmware ExpressionParser.cpp (tag 3.5.4-vm.1):
+// Transcribed from RepRapFirmware ExpressionParser.cpp (upstream tag 3.5.4):
 // ParseInternal, BalanceNumericTypes, BalanceTypes, ApplyLengthOperator and
 // ParseIdentifierExpression.  Only *definite* errors are reported
 // (TC-DIAG-08): every combination of the operands' possible types must fail,
@@ -12,7 +12,7 @@ import {
     Ty, Kind, Atom, UNKNOWN, BOTTOM, NUMBER, prim, arrayOf, union, atoms, kindOf, isUnknown, isBottom,
     lacksAll, hasKind, describe,
 } from './types';
-import { Version, functionMissing, constantMissing, stringIndexing } from './versions';
+import { Version, functionMissing, stringIndexing } from './versions';
 import { omType } from './om';
 
 // ── Diagnostic codes and firmware texts ─────────────────────────────────────
@@ -24,7 +24,6 @@ export const CODE = {
     index: 'rrf-type-index',
     value: 'rrf-type-value',
     version: 'rrf-version',
-    skipped: 'rrf-skipped-operand',
 } as const;
 export type Code = typeof CODE[keyof typeof CODE];
 
@@ -68,13 +67,12 @@ export interface TypeDiag {
 }
 
 /**
- * Evaluation mode of an operand (SPEC §9): `yes` — evaluated; `maybe` — the
- * firmware may skip it (right of `&&`/`||`, a `?:` branch); `no` — always
- * skipped (decided by a literal).  Skipped operands are parsed with
- * evaluate == false: most errors vanish, but identifiers read as null and a
+ * Evaluation mode of an operand (SPEC §9): `yes` — it may be evaluated; `no` —
+ * always skipped (`false && …`, `true || …`, a `?:` branch a literal rules out).
+ * Skipped operands are parsed with evaluate == false: most errors vanish, but a
  * few checks run unconditionally.
  */
-export type Mode = 'yes' | 'maybe' | 'no';
+export type Mode = 'yes' | 'no';
 
 export interface Scope {
     /** Type of `var.<name>` here; undefined when it is not declared. */
@@ -300,13 +298,6 @@ function omPath(n: Node): string | null {
     return null;
 }
 
-/** Operands that read as null in a skipped operand: identifiers, `(identifier)`, `#identifier`. */
-function readsNullWhenSkipped(n: Node): boolean {
-    if (n.k === 'paren') return readsNullWhenSkipped(n.e);
-    if (n.k === 'unary' && n.op === '#') return readsNullWhenSkipped(n.arg);
-    return identRoot(n) !== null;
-}
-
 // ── The typer ───────────────────────────────────────────────────────────────
 
 export class Typer {
@@ -316,7 +307,7 @@ export class Typer {
 
     private emit(code: Code, s: Span, message: string, severity: 'error' | 'warning' = 'error'): void {
         if (!this.o.report) return;
-        const note = this.o.note && severity === 'error' && code !== CODE.skipped ? this.o.note : '';
+        const note = this.o.note && severity === 'error' ? this.o.note : '';
         this.o.report({ line: this.o.line, start: s.start, end: s.end, code, message: message + note, severity });
     }
 
@@ -360,16 +351,6 @@ export class Typer {
             case 'null': return { t: prim('null'), v: { nul: true } };
             case 'pi': return { t: prim('float') };
             case 'iterations': case 'line': case 'result': return { t: prim('int') };
-            case 'input': {
-                const added = constantMissing('input', this.o.version);
-                if (added) {
-                    this.emit(CODE.version, n.s,
-                        `'input' is not available on RepRapFirmware ${this.o.version!.text}: it was added in ${added} ` +
-                        `(the firmware reports "unknown value 'input'")`);
-                    return FAILED;
-                }
-                return { t: UNKNOWN };
-            }
             default: return { t: UNKNOWN };
         }
     }
@@ -413,7 +394,7 @@ export class Typer {
         const allowed: Kind[] = strings === false ? ['array'] : ['array', 'string'];
         if (lacksAll(base.t, ...allowed)) {
             return this.fail(mode, CODE.index, n.base.s,
-                `cannot index ${describe(base.t)}${strings === false && hasKind(base.t, 'string') ? ` (string indexing needs RepRapFirmware 3.6.0-beta.4)` : ''}: ` +
+                `cannot index ${describe(base.t)}${strings === false && hasKind(base.t, 'string') ? ` (string indexing needs RepRapFirmware 3.6)` : ''}: ` +
                 `the firmware stops with "${MSG.leftNotArray}"`);
         }
         return { t: this.elements(base.t, strings !== false) };
@@ -463,12 +444,6 @@ export class Typer {
     private unary(n: Node & { k: 'unary' }, scope: Scope, mode: Mode): R {
         if (n.op === '#') return this.length(n, scope, mode);
         const arg = this.infer(n.arg, scope, mode);
-        if ((n.op === '-' || n.op === '+') && mode !== 'yes' && readsNullWhenSkipped(n.arg)) {
-            this.skippedHazard(n, mode, n.op === '-' ? MSG.unaryMinus : MSG.unaryPlus,
-                `'${n.op}${this.text(n.arg.s)}' fails when this operand is skipped, because skipped identifiers read as null`,
-                n.op === '-' ? `write '0 - ${this.text(n.arg.s)}' or '${this.text(n.arg.s)} * -1'` : `write '0 + ${this.text(n.arg.s)}'`);
-            if (mode === 'no') return FAILED;
-        }
         if (arg.failed) return FAILED;
         if (n.op === '!' && arg.v && 'bool' in arg.v) return { t: prim('bool'), v: { bool: !arg.v.bool } };
         const res = combineUnary(n.op, arg.t);
@@ -518,8 +493,7 @@ export class Typer {
     /** Mode of an operand the firmware skips when `decider` has the literal value `skipOn`. */
     private dependentMode(mode: Mode, decider: R, skipOn: boolean): Mode {
         if (mode === 'no') return 'no';
-        if (decider.v && 'bool' in decider.v) return decider.v.bool === skipOn ? 'no' : mode;
-        return 'maybe';
+        return decider.v && 'bool' in decider.v && decider.v.bool === skipOn ? 'no' : mode;
     }
 
     private binary(n: Node & { k: 'binary' }, scope: Scope, mode: Mode): R {
@@ -560,36 +534,15 @@ export class Typer {
 
     // ── Functions ───────────────────────────────────────────────────────────
 
-    private skippedHazard(n: Node, mode: Mode, firmware: string, what: string, fix: string): void {
-        this.emit(CODE.skipped, n.s,
-            `${what}: the firmware stops with "${firmware}" ${mode === 'no' ? 'every time' : 'whenever the operand is skipped'} — ${fix}`,
-            mode === 'no' ? 'error' : 'warning');
-    }
-
     private call(n: Node & { k: 'call' }, scope: Scope, mode: Mode): R {
         if (n.name === 'exists') return { t: prim('bool') };
         const added = functionMissing(n.name, this.o.version);
         const args = n.args.map(a => this.infer(a, scope, mode));
         if (added) {
             this.emit(CODE.version, n.nameS,
-                `'${n.name}' is not available on RepRapFirmware ${this.o.version!.text}: it was added in ${added} ` +
+                `'${n.name}' is not available on RepRapFirmware ${this.o.version}: it was added in ${added} ` +
                 `(the firmware reports "${MSG.unknownFunction}")`);
             return FAILED;
-        }
-        if (n.name === 'fileread' && mode !== 'yes') {
-            this.emit(CODE.skipped, n.s,
-                `fileread() opens the file even when this operand is skipped, so a missing file still stops the macro ` +
-                `— read it in a separate statement guarded by 'if'`, 'warning');
-        }
-        const single = n.args.length === 1 && readsNullWhenSkipped(n.args[0]) && mode !== 'yes';
-        const hazard = (firmware: string) => {
-            this.skippedHazard(n, mode, firmware,
-                `'${this.text(n.s)}' fails when this operand is skipped, because skipped identifiers read as null`,
-                `compute it in a separate statement guarded by 'if'`);
-        };
-        if (single && (n.name === 'random' || n.name === 'datetime' || n.name === 'max' || n.name === 'min')) {
-            hazard(n.name === 'random' ? MSG.positiveInt : n.name === 'datetime' ? MSG.toDateTime : MSG.notArray);
-            if (mode === 'no') return FAILED;
         }
         return new Builtin(this, n, args, mode).run();
     }

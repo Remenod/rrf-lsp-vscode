@@ -2,8 +2,8 @@
 // The type lattice of RRF expressions (SPEC TC-TYPE-01..03).
 //
 // A type is either `unknown` (absorbs everything) or a union of atoms.  The
-// empty union is *bottom* — "no value seen yet"; it only appears while the
-// workspace global types are being solved and is displayed as `unknown`.
+// empty union is *bottom*, a type with no possible value (the elements of an
+// empty array); it is displayed as `unknown`.
 
 export type Prim = 'int' | 'uint' | 'float' | 'bool' | 'string' | 'char' | 'datetime' | 'object' | 'null';
 
@@ -100,7 +100,6 @@ export function key(t: Ty): string {
     return t.map(a => (typeof a === 'string' ? a : `[${a.heap ? 'h' : 'o'}${a.len ?? ''}:${key(a.elem)}]`)).join('|');
 }
 
-export const sameTy = (a: Ty, b: Ty): boolean => key(a) === key(b);
 
 /** Display form used by hover (TC-TYPE-03). Bottom shows as `unknown`. */
 export function display(t: Ty): string {

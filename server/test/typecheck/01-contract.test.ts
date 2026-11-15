@@ -14,7 +14,7 @@ const H = 'move.axes[0].homed';
 describe('TC-CFG: settings', () => {
   guard('TC-CFG-01', 'checker off: no diagnostic carries a type-check code', () => {
     for (const t of ['echo "a" + 1', 'if 1\n  echo 1', 'echo abs("x")', 'echo round(1.5)']) {
-      for (const v of [undefined, '3.5.4']) {
+      for (const v of [undefined, '3.5']) {
         const ds = lintTc(t, { rrfVersion: v }, false);
         assert.deepEqual(ds.filter(d => ALL_CODES.has(String(d.code))).map(d => d.message), [], t);
       }
@@ -28,8 +28,8 @@ describe('TC-CFG: settings', () => {
     assert.ok(typeDiags('echo "a" + 1').length === 1);
   });
 
-  guard('TC-CFG-02', 'version-neutral values never produce rrf-version diagnostics', () => {
-    for (const v of [undefined, '', 'garbage', '3', 'v3.5', '3.2.9', '2.05', '3.x']) {
+  guard('TC-CFG-02', 'an empty or unrecognised value sets no target: no rrf-version diagnostics', () => {
+    for (const v of [undefined, '', 'garbage', '3', 'v3.5', '3.5.4', '3.6.0-rc.3', '2.05', '3.x']) {
       const ds = typeDiags('echo round(1.5)\necho square(2)\necho take("abc", 1)\necho input', { rrfVersion: v });
       assert.deepEqual(ds.filter(d => d.code === CODE.version).map(d => d.message), [], String(v));
     }
@@ -40,13 +40,13 @@ describe('TC-CFG: settings', () => {
     assert.equal(typeDiags(t).length, 1);
   });
 
-  guard('TC-CFG-04', 'the checker never removes or changes another diagnostic', () => {
+  guard('TC-CFG-01', 'type checking changes no other diagnostic', () => {
     const samples = [
       'echo 1 +', 'G1 X10 X20', 'echo var.nope', 'M117 ' + 'x'.repeat(300), 'if 1\n  break',
       'var a = 1\nvar a = 2', 'echo nonsense', 'echo abs(1, 2)', 'echo "a" + 1', 'echo #10',
       'set param.A = 1', 'else\n  echo 1', 'echo exists(var.x) && var.x > 1',
     ];
-    for (const t of samples) for (const v of [undefined, '3.5.4']) {
+    for (const t of samples) for (const v of [undefined, '3.5']) {
       assert.deepEqual(lostDiags(t, { rrfVersion: v }).map(d => d.message), [], t);
     }
   });
@@ -67,7 +67,7 @@ describe('TC-DIAG: diagnostic shape', () => {
       assert.equal(ds[0].code, code, t);
       assert.equal(ds[0].source, 'rrf-gcode', t);
     }
-    const v = typeDiags('echo round(1.5)', { rrfVersion: '3.5.4' });
+    const v = typeDiags('echo round(1.5)', { rrfVersion: '3.5' });
     assert.equal(v[0]?.code, CODE.version);
   });
 
@@ -128,7 +128,7 @@ describe('TC-DIAG: diagnostic shape', () => {
   guard('TC-DIAG-07', 'values the server cannot see are unknown and never reported', () => {
     for (const t of [
       'echo foo(1) + "a"',
-      'echo state.vmFeatureLevel + "a"',
+      'echo state.noSuchField + "a"',
       'echo nonsense.path * 2',
       'if exists(var.never)\n  echo var.never + "a"',
       'echo global.notDeclaredAnywhere + "a"',
@@ -162,7 +162,7 @@ describe('TC-TYPE: lattice and display', () => {
   });
   rule('TC-TYPE-02', 'unknown absorbs unions', () => {
     expectType(typeOfExpr(`${H} ? param.A : 1`), 'unknown', 'param branch');
-    expectType(typeOfExpr(`${H} ? 1 : state.vmFeatureLevel`), 'unknown', 'unknown OM branch');
+    expectType(typeOfExpr(`${H} ? 1 : state.noSuchField`), 'unknown', 'unknown OM branch');
   });
   rule('TC-TYPE-03', 'unions are displayed with |', () => {
     const h = hoverText(src(`var t = ${H} ? 1 : "a"`, 'echo var.t'), 1, 'var.t') ?? '';

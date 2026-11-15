@@ -138,7 +138,7 @@ function analyse(st: SymbolTable, uri: string, text: string, version: Version | 
     const c = cacheFor(st);
     const globals = solveGlobals(st, c);
     const e = docFor(c, uri, text);
-    const k = version?.text ?? '';
+    const k = version ?? '';
     let r = e.results.get(k);
     if (!r) {
         r = runFlow(e.doc, { version, globals: n => globals.get(n) ?? UNKNOWN, report: true, record: true });

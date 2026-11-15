@@ -85,7 +85,14 @@
         "rrfgcode.rrfVersion": {
           "type": "string",
           "default": "",
-          "markdownDescription": "Target RepRapFirmware version, e.g. `3.5.4` or `3.6.0-rc.3`. Functions and constants added in later versions (`round`, `take`, `input`, …) are reported as unknown. Leave empty to accept everything the newest firmware knows. Suffixes other than `-alpha.N`, `-beta.N` and `-rc.N` are ignored, so `3.5.4-vm.1` means `3.5.4`."
+          "enum": ["", "3.5", "3.6", "3.7"],
+          "enumDescriptions": [
+            "No target: everything the newest firmware knows is accepted",
+            "RepRapFirmware 3.5, latest release",
+            "RepRapFirmware 3.6, latest release",
+            "RepRapFirmware 3.7, latest release"
+          ],
+          "markdownDescription": "Target RepRapFirmware line. Functions added later (`round`, `take`, `drop`, `find`, `square` need 3.6) are reported as unknown on an older line."
         }
       }
     }

@@ -156,7 +156,7 @@ describe('symbols: inferred types of initialisers', () => {
   }
 
   it('unknown stays "unknown" rather than guessing', () => {
-    assert.equal(typeOf('state.vmFeatureLevel'), 'unknown');
+    assert.equal(typeOf('state.noSuchField'), 'unknown');
     assert.equal(typeOf('var.other + 1'), 'unknown');
   });
 });

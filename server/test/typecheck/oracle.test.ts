@@ -5,7 +5,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   binary, unary, balanceTypes, balanceNumeric, ALL_TYPES, BINARY_OPS, UNARY_OPS, Ty, Result, MSG,
-  FN_3_5_4, FUNCTIONS_INTRODUCED, compareVersions, introducedIn,
+  FN_3_5_4, FUNCTIONS_FROM_3_6,
 } from './model';
 import { FUNCTION_NAMES } from '../../src/parser/types';
 
@@ -106,23 +106,8 @@ describe('oracle: functions', () => {
 });
 
 describe('oracle: versions', () => {
-  it('ordering per TC-CFG-03', () => {
-    const order = ['3.3', '3.4.0', '3.5.0', '3.5.4', '3.6.0-alpha.2', '3.6.0-beta.4', '3.6.0-rc.2', '3.6.0-rc.3', '3.6.0', '3.6.1', '3.7'];
-    for (let i = 1; i < order.length; i++) assert.ok(compareVersions(order[i - 1], order[i]) < 0, `${order[i - 1]} < ${order[i]}`);
-    assert.equal(compareVersions('3.5', '3.5.0'), 0);
-    assert.equal(compareVersions('3.5.4-vm.1', '3.5.4'), 0, 'unknown suffixes are ignored');
-  });
-  it('the version table covers exactly the functions the server knows', () => {
-    const tabled = FUNCTIONS_INTRODUCED.flatMap(i => i.names).sort();
-    assert.deepEqual(tabled, [...FUNCTION_NAMES].sort());
-  });
-  it('the 3.5.4 typing table covers exactly the functions available in 3.5.4 except exists', () => {
-    const avail = FUNCTIONS_INTRODUCED.filter(i => compareVersions(i.version, '3.5.4') <= 0).flatMap(i => i.names).filter(f => f !== 'exists').sort();
+  it('the 3.5 typing table covers every function the server knows except exists and the 3.6 ones', () => {
+    const avail = [...FUNCTION_NAMES].filter(f => f !== 'exists' && !FUNCTIONS_FROM_3_6.includes(f)).sort();
     assert.deepEqual(Object.keys(FN_3_5_4).sort(), avail);
-  });
-  it('spot checks', () => {
-    assert.equal(introducedIn('datetime'), '3.4.0');
-    assert.equal(introducedIn('vector'), '3.5.0');
-    assert.equal(introducedIn('round'), '3.6.0-rc.3');
   });
 });

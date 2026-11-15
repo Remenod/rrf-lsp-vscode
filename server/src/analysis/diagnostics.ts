@@ -136,7 +136,7 @@ export function computeDiagnostics(uri: string, text: string, opts: DiagnosticsO
       docLines: lines,
     };
 
-    for (const err of validateLine(tokens, lineText, ctx)) {
+    for (const err of validateLine(tokens, ctx)) {
       const sev = err.severity === 'warning' ? DiagnosticSeverity.Warning
         : err.severity === 'information' ? DiagnosticSeverity.Information
           : DiagnosticSeverity.Error;

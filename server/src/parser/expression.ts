@@ -610,7 +610,6 @@ export class ExpressionValidator {
 
 export function validateLine(
   tokens: Token[],
-  lineText: string,
   ctx?: DiagnosticContext,
 ): ParseError[] {
   const errors: ParseError[] = [];

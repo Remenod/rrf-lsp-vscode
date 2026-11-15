@@ -51,7 +51,7 @@ describe('operator matrix: diagnostics (every op × left × right)', () => {
         }
         assert.deepEqual(problems, []);
       };
-      // A row in which nothing may be reported passes today; register it as a live guard, not a todo.
+      // A row in which nothing may be reported is a guard (silence), not a rule.
       const anyExpected = ALL_TYPES.some(b => binaryCase(op, a, b).expected.length > 0);
       if (!anyExpected) guard(id, `'${op}' with left ${a}: never reported`, body);
       else rule(id, `'${op}' with left ${a}`, body);

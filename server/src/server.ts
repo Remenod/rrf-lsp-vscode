@@ -29,7 +29,6 @@ import {
   ReferenceParams,
   ResponseError,
   WorkspaceEdit,
-  TextEdit,
   CodeAction,
   CodeActionKind,
   CodeActionParams,
@@ -70,6 +69,7 @@ import { pathLocationAtCursor } from './analysis/pathDefinition';
 import { lineIndent, findTokenAtChar } from './analysis/utils';
 import { computeDiagnostics } from './analysis/diagnostics';
 import { globalTypesSignature } from './analysis/typecheck';
+import { SNIFFED_EXTENSIONS, looksLikeGCode, collectRrfFiles as collectRrfFilesUnder } from './analysis/rrfFiles';
 
 // ── Connection setup ──────────────────────────────────────────────────────────
 const connection = createConnection(ProposedFeatures.all);
@@ -105,46 +105,6 @@ const gcodeData: DocDB = loadJson('../data/gcode-commands.json', 'G-code diction
 const metaData: DocDB = loadJson('../data/gcode-meta-commands.json', 'meta-commands dictionary');
 const operatorsData: DocDB = loadJson('../data/gcode-operators.json', 'operators dictionary');
 const functionsData: DocDB = loadJson('../data/gcode-functions.json', 'functions dictionary');
-
-// ── File detection ─────────────────────────────────────────────────────────────
-//
-// Compared case-insensitively (extensions are lower-cased before lookup) and
-// aligned with the language registration in package.json (.g/.gcode/.gc/.gco).
-const RRF_EXTENSIONS = new Set(['.g', '.gcode', '.gc', '.gco', '.macro', '.cfg']);
-
-// Extensions that other ecosystems use too (e.g. Klipper's printer.cfg), so a
-// file only counts as RRF G-code when its content also looks like it.
-const SNIFFED_EXTENSIONS = new Set(['.cfg', '.macro']);
-
-/**
- * Returns true if `text` looks like RRF G-code / meta-command content.
- *
- * Used to classify files without a registered extension (e.g. `homedelta`,
- * `bed.g.bak`, or completely extensionless macros dropped in sys/).
- *
- * Heuristic: sample the first 30 non-blank lines; if ≥ 20 % of them start
- * with a recognisable G-code or meta-command pattern we treat the file as
- * RRF G-code.
- */
-function looksLikeGCode(text: string): boolean {
-  const checked = text
-    .split(/\r?\n/)
-    .map(l => l.trim())
-    .filter(l => l.length > 0)
-    .slice(0, 30);
-
-  if (checked.length === 0) return false;
-
-  let hits = 0;
-  for (const line of checked) {
-    if (/^;/.test(line)) { hits++; continue; }                         // comment
-    if (/^[GMTgmt]\d/.test(line)) { hits++; continue; }                // G/M/T code
-    if (/^(var|global|set|if|elif|else|while|break|continue|abort|param|echo|skip)\b/i
-      .test(line)) { hits++; continue; }                               // meta command
-  }
-
-  return hits >= Math.max(2, Math.floor(checked.length * 0.2));
-}
 
 // ── Initialize ────────────────────────────────────────────────────────────────
 connection.onInitialize((_params: InitializeParams): InitializeResult => {
@@ -306,45 +266,7 @@ const backgroundDiagnosticUris = new Set<string>();
 
 /** Collect all RRF files under `dir` that are not already open. */
 function collectRrfFiles(dir: string): Array<{ uri: string; content: string }> {
-  const results: Array<{ uri: string; content: string }> = [];
-  let entries: fs.Dirent[];
-  try { entries = fs.readdirSync(dir, { withFileTypes: true }); }
-  catch { return results; }
-
-  for (const entry of entries) {
-    if (entry.name.startsWith('.') || entry.name === 'node_modules') continue;
-    const fullPath = path.join(dir, entry.name);
-    if (entry.isDirectory()) {
-      results.push(...collectRrfFiles(fullPath));
-      continue;
-    }
-
-    const ext = path.extname(entry.name).toLowerCase();
-    const noExt = ext === '';
-
-    // Skip files with non-RRF extensions
-    if (!noExt && !RRF_EXTENSIONS.has(ext)) continue;
-
-    const fileUri = URI.file(fullPath).toString();
-
-    // Already tracked by the documents manager (file is open) — skip;
-    // the open document's diagnostics are handled via onDidOpen / onDidChangeContent.
-    if (documents.get(fileUri)) continue;
-
-    let content: string;
-    try {
-      content = fs.readFileSync(fullPath, 'utf8');
-    } catch {
-      continue;
-    }
-
-    // Extensionless and shared-extension files (.cfg/.macro) must also LOOK
-    // like RRF G-code, so e.g. a Klipper printer.cfg is not indexed.
-    if ((noExt || SNIFFED_EXTENSIONS.has(ext)) && !looksLikeGCode(content)) continue;
-
-    results.push({ uri: fileUri, content });
-  }
-  return results;
+  return collectRrfFilesUnder(dir, uri => documents.get(uri) !== undefined);
 }
 
 function scanDirectoryForGlobals(dir: string): void {

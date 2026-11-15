@@ -82,8 +82,6 @@ export function getTailPathRule(commandName: string): PathArgRule | undefined {
 // ── Concrete path validators ─────────────────────────────────────────────────
 
 export const filePathValidator: ArgValidator = makePathValidator('exists');
-export const directoryPathValidator: ArgValidator = makePathValidator('directory-exists');
-export const parentPathValidator: ArgValidator = makePathValidator('parent-exists');
 
 function makePathValidator(mode: PathCheckMode, resolve?: PathResolveOptions): ArgValidator {
     return (a): Diagnostic | null => {

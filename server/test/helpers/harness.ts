@@ -51,7 +51,7 @@ export interface LintOptions {
   argCheck?: Partial<ArgCheckConfig> & { paths?: Partial<ArgCheckConfig['paths']> };
   /** File path to lint as (inside an SD tree for path checks). Defaults to a bare virtual URI. */
   file?: string;
-  /** Target firmware version, e.g. '3.5.4' (type-check spec, `rrfgcode.rrfVersion`). */
+  /** Target firmware line, '3.5', '3.6' or '3.7' (`rrfgcode.rrfVersion`). */
   rrfVersion?: string;
   /**
    * Type checker on/off (type-check spec, `rrfgcode.typeCheck.enabled`). The harness defaults to

@@ -1,9 +1,9 @@
-// The test-side contract of the type checker (see SPEC.md "The interface the tests assume").
+// Test helpers for the type checker (rules in SPEC.md).
 //
 //  * typeDiags()      — diagnostics that exist with the checker ON and not with it OFF.
 //  * expectTypes()    — exact assertion on those diagnostics (code, range, severity, message).
 //  * typeAt()         — the inferred type at a position, read from hover.
-//  * rule() / guard() — gated spec tests / always-live regression guards.
+//  * rule() / guard() — a test of a SPEC rule: something reported / something kept silent.
 
 import assert from 'node:assert/strict';
 import { it } from 'node:test';
@@ -11,7 +11,6 @@ import { Diagnostic, DiagnosticSeverity } from 'vscode-languageserver/node';
 import { lint, lex, readData, LintOptions } from '../helpers/harness';
 import { buildHover } from '../../src/analysis/hover';
 import { SymbolTable } from '../../src/analysis/symbolTable';
-import { IMPLEMENTED } from './implemented';
 
 // ── Diagnostic codes (TC-DIAG-01) ─────────────────────────────────────────────
 
@@ -22,32 +21,20 @@ export const CODE = {
   index: 'rrf-type-index',
   value: 'rrf-type-value',
   version: 'rrf-version',
-  skipped: 'rrf-skipped-operand',
 } as const;
 export type Code = typeof CODE[keyof typeof CODE];
 export const ALL_CODES: ReadonlySet<string> = new Set(Object.values(CODE));
 
-// ── Gating ────────────────────────────────────────────────────────────────────
+// ── Rule tests ────────────────────────────────────────────────────────────────
 
-export const STRICT = process.env.RRF_TC_STRICT === '1';
-
-export function isImplemented(id: string): boolean {
-  for (const p of IMPLEMENTED) {
-    if (p === id) return true;
-    if (p.endsWith('*') && id.startsWith(p.slice(0, -1))) return true;
-  }
-  return false;
-}
-
-/** A spec test: `todo` until the rule is listed in implemented.ts (or RRF_TC_STRICT=1). */
+/** A test of SPEC rule `id`: something the checker reports or infers. */
 export function rule(id: string, title: string, fn: () => void): void {
-  const live = STRICT || isImplemented(id);
-  it(`${id} ${title}`, live ? {} : { todo: `${id} not implemented` }, fn);
+  it(`${id} ${title}`, fn);
 }
 
-/** Always live: true today, must stay true once the checker exists. */
+/** A test of SPEC rule `id` asserting silence: something the checker must not report or change. */
 export function guard(id: string, title: string, fn: () => void): void {
-  it(`${id} [guard] ${title}`, fn);
+  it(`${id} ${title}`, fn);
 }
 
 // ── Linting with the checker on/off ───────────────────────────────────────────
@@ -87,7 +74,7 @@ export function typeDiags(text: string, opts: TcOptions = {}): Diagnostic[] {
   return diffDiagnostics(lintTc(text, opts, true), lintTc(text, opts, false));
 }
 
-/** Diagnostics the checker REMOVED or CHANGED: must always be empty (TC-CFG-04). */
+/** Diagnostics the checker REMOVED or CHANGED: must always be empty (TC-CFG-01). */
 export function lostDiags(text: string, opts: TcOptions = {}): Diagnostic[] {
   return diffDiagnostics(lintTc(text, opts, false), lintTc(text, opts, true));
 }

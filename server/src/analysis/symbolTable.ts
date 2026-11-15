@@ -78,7 +78,6 @@ export class SymbolTable {
         }
 
         const localMap = this.locals.get(uri)!;
-        const paramMap = this.params.get(uri)!;
 
         const lines = text.split(/\r?\n/);
         for (let i = 0; i < lines.length; i++) {

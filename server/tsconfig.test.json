@@ -8,5 +8,5 @@
     "types": ["node"]
   },
   "include": ["src/**/*", "test/**/*"],
-  "exclude": ["node_modules", "out", "out-test", "test/corpus"]
+  "exclude": ["node_modules", "out", "out-test"]
 }

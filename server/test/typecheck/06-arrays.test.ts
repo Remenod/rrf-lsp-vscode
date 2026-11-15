@@ -47,8 +47,8 @@ describe('TC-ARR-03: indexing a non-array variable', () => {
       }]);
     }
   });
-  rule('TC-ARR-03', 'strings are not indexable through variables, even on 3.6', () => {
-    expectTypes(src('var s = "abc"', 'echo var.s[0]'), [{ code: CODE.index, at: 'var.s', line: 1 }], { rrfVersion: '3.6.1' });
+  rule('TC-ARR-03', 'strings are not indexable through variables, on any line', () => {
+    expectTypes(src('var s = "abc"', 'echo var.s[0]'), [{ code: CODE.index, at: 'var.s', line: 1 }], { rrfVersion: '3.6' });
   });
   guard('TC-ARR-03', 'params and unknown globals may hold arrays', () => {
     expectNoTypes('echo param.A[0]\necho global.notDeclared[1]');
@@ -93,7 +93,7 @@ describe('TC-ARR-07: indexing a bracketed expression', () => {
     expectNoTypes('echo {1, 2}[0]');
   });
   rule('TC-ARR-07', 'non-array base and bad indices', () => {
-    expectTypes('echo (5)[0]', [{ code: CODE.index, at: '(5)', firmware: 'left operand of [ ] is not an array' }], { rrfVersion: '3.5.4' });
+    expectTypes('echo (5)[0]', [{ code: CODE.index, at: '(5)', firmware: 'left operand of [ ] is not an array' }], { rrfVersion: '3.5' });
     expectTypes('echo {1, 2}[1.5]', [{ code: CODE.index, at: '1.5', firmware: MSG.nonNegativeInt }]);
     expectTypes('echo {1, 2}[-1]', [{ code: CODE.value, at: '-1', firmware: MSG.nonNegativeInt }]);
   });

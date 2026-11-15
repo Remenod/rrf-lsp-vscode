@@ -175,8 +175,8 @@ describe('TC-FN-11: per-argument diagnostics; bad calls are unknown', () => {
   });
 });
 
-describe('TC-FN-12: post-3.5.4 functions (typed when available)', () => {
-  rule('TC-FN-12', 'types with no version and with 3.6.1', () => {
+describe('TC-FN-12: functions added in 3.6', () => {
+  rule('TC-FN-12', 'types with no target and with 3.6', () => {
     // Hover is version-neutral (newest table).
     expectType(typeOfExpr('square(3)'), 'float', 'square');
     expectType(typeOfExpr('round(2.5)'), 'int', 'round');
@@ -184,8 +184,8 @@ describe('TC-FN-12: post-3.5.4 functions (typed when available)', () => {
     expectType(typeOfExpr('take({1, 2, 3}, 2)'), 'array<int>', 'take array');
     expectType(typeOfExpr('drop("abcdef", 3)'), 'string', 'drop');
     expectType(typeOfExpr('find("abc", \'b\')'), 'int', 'find');
-    // Diagnostics do take the version: 3.6.1 has them all.
-    expectNoTypes('echo square(3) + round(2.5) + find("abc", \'b\')\necho take("abc", 1) ^ drop("abc", 1)', { rrfVersion: '3.6.1' });
+    // Diagnostics do take the version: 3.6 has them all.
+    expectNoTypes('echo square(3) + round(2.5) + find("abc", \'b\')\necho take("abc", 1) ^ drop("abc", 1)', { rrfVersion: '3.6' });
   });
   rule('TC-FN-12', 'argument errors', () => {
     expectTypes('echo square("x")', [{ code: CODE.argument, at: '"x"', firmware: MSG.numericOperand }]);

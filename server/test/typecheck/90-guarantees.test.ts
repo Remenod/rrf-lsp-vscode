@@ -1,35 +1,32 @@
-// SPEC §13: no false positives on real macros, robustness. All guards: they hold today and must
-// keep holding once the checker exists.
+// No false positives on valid code (TC-DIAG-08), and robustness: no crash, determinism, speed.
 
-import { describe } from 'node:test';
+import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { guard, typeDiags, lintTc, diffDiagnostics, describeDiag, expectNoTypes } from './contract';
-import { corpusAvailable, lintCorpus, CorpusResult } from '../helpers/corpus';
+import { lintWorkspace, scaledWorkspace, WorkspaceResult, WORKSPACE } from '../helpers/workspace';
 import { src } from '../helpers/harness';
 
-const skip = corpusAvailable() ? false : 'corpus not fetched — run `npm run corpus:fetch`';
-
-function corpusTypeDiags(rrfVersion?: string, reverseIndexOrder = false): string[] {
-  const on = lintCorpus({ typeCheck: { enabled: true }, rrfVersion, reverseIndexOrder });
-  const off = lintCorpus({ typeCheck: { enabled: false }, rrfVersion, reverseIndexOrder });
-  const byRel = new Map(off.map(r => [r.rel, r]));
-  return on.flatMap((r: CorpusResult) =>
-    diffDiagnostics(r.diagnostics, byRel.get(r.rel)!.diagnostics).map(d => `${r.rel}: ${describeDiag(d)}`));
+function workspaceTypeDiags(rrfVersion?: string, reverseIndexOrder = false): string[] {
+  const on = lintWorkspace(WORKSPACE, { typeCheck: { enabled: true }, rrfVersion, reverseIndexOrder });
+  const off = lintWorkspace(WORKSPACE, { typeCheck: { enabled: false }, rrfVersion, reverseIndexOrder });
+  const byUri = new Map(off.map(r => [r.uri, r]));
+  return on.flatMap((r: WorkspaceResult) =>
+    diffDiagnostics(r.diagnostics, byUri.get(r.uri)!.diagnostics).map(d => `${r.uri}: ${describeDiag(d)}`));
 }
 
-describe('TC-FP-01: the Vision Miner 4.2.0 corpus', { skip }, () => {
-  guard('TC-FP-01', 'zero type diagnostics, version unset', () => assert.deepEqual(corpusTypeDiags(), []));
-  guard('TC-FP-01', 'zero type diagnostics, rrfVersion 3.5.4', () => assert.deepEqual(corpusTypeDiags('3.5.4'), []));
-  guard('TC-FP-01', 'the checker removes nothing from the corpus baseline', () => {
-    const on = lintCorpus({ typeCheck: { enabled: true } });
-    const off = lintCorpus({ typeCheck: { enabled: false } });
-    const byRel = new Map(on.map(r => [r.rel, r]));
-    const lost = off.flatMap(r => diffDiagnostics(r.diagnostics, byRel.get(r.rel)!.diagnostics).map(d => `${r.rel}: ${describeDiag(d)}`));
+describe('TC-DIAG-08: a workspace of valid macros', () => {
+  guard('TC-DIAG-08', 'zero type diagnostics, version unset', () => assert.deepEqual(workspaceTypeDiags(), []));
+  guard('TC-DIAG-08', 'zero type diagnostics, rrfVersion 3.5', () => assert.deepEqual(workspaceTypeDiags('3.5'), []));
+  guard('TC-DIAG-08', 'the checker removes nothing from the other diagnostics', () => {
+    const on = lintWorkspace(WORKSPACE, { typeCheck: { enabled: true } });
+    const off = lintWorkspace(WORKSPACE, { typeCheck: { enabled: false } });
+    const byUri = new Map(on.map(r => [r.uri, r]));
+    const lost = off.flatMap(r => diffDiagnostics(r.diagnostics, byUri.get(r.uri)!.diagnostics).map(d => `${r.uri}: ${describeDiag(d)}`));
     assert.deepEqual(lost, []);
   });
 });
 
-describe('TC-FP-02: valid idioms stay silent', () => {
+describe('TC-DIAG-08: valid idioms stay silent', () => {
   const idioms: string[] = [
     src('if !exists(global.x)', '  global x = 0'),
     'var dir = move.axes[0].machinePosition > 0 ? 1 : -1',
@@ -37,8 +34,8 @@ describe('TC-FP-02: valid idioms stay silent', () => {
     'M291 P{"Temp " ^ heat.heaters[1].current ^ "C"} R"Info" S1',
     src('while iterations < #move.axes', '  if move.axes[iterations].homed', '    continue', '  echo "axis", iterations, "not homed"'),
     src('var t = state.currentTool', 'if var.t >= 0', '  echo tools[var.t].name'),
-    src('if fileexists("0:/sys/user/x.g")', '  M98 P"0:/sys/user/x.g"'),
-    src('var v = 1.5', 'echo >"0:/sys/user/variables/X.g" "set global.x = " ^ var.v'),
+    src('if fileexists("0:/sys/saved/x.g")', '  M98 P"0:/sys/saved/x.g"'),
+    src('var v = 1.5', 'echo >"0:/sys/saved/X.g" "set global.x = " ^ var.v'),
     src("var r = fileread(\"0:/sys/version.txt\", 0, 2, ',')", 'if var.r[0] == "4"', '  echo 1'),
     src('var count = 0', 'set var.count = var.count + 1'),
     'if state.status == "processing" || state.status == "paused"\n  echo 1',
@@ -77,11 +74,11 @@ describe('TC-FP-02: valid idioms stay silent', () => {
     'G1 X{max(move.axes[0].min, -10)}',
     'echo "x" ^ {1, 2}',
   ];
-  for (const t of idioms) guard('TC-FP-02', JSON.stringify(t).slice(0, 90), () => expectNoTypes(t));
+  for (const t of idioms) guard('TC-DIAG-08', JSON.stringify(t).slice(0, 90), () => expectNoTypes(t));
 });
 
-describe('TC-ROB: robustness', () => {
-  guard('TC-ROB-01', 'random token soup never throws', () => {
+describe('robustness', () => {
+  it('random token soup never throws', () => {
     const vocab = ['var', 'set', 'if', 'echo', 'while', 'global', 'abort', 'var.x', 'global.g', 'param.A', 'move.axes', '[', ']',
       '(', ')', '{', '}', ',', '+', '-', '*', '/', '^', '&&', '||', '!', '?', ':', '==', '<', '#', '1', '2.5', '3000000000',
       '"s"', "'c'", 'true', 'null', 'abs', 'max', 'vector', 'fileread', 'random', 'datetime', 'iterations', 'G1', 'X', 'M98', 'P', '=', ';'];
@@ -90,33 +87,38 @@ describe('TC-ROB: robustness', () => {
     for (let i = 0; i < 600; i++) {
       const len = 1 + rnd(12);
       const line = Array.from({ length: len }, () => vocab[rnd(vocab.length)]).join(rnd(3) ? ' ' : '');
-      for (const v of [undefined, '3.5.4']) {
+      for (const v of [undefined, '3.5']) {
         assert.doesNotThrow(() => lintTc(src('var x = 1', line), { rrfVersion: v }), line);
       }
     }
   });
-  guard('TC-ROB-01', 'every prefix of a realistic macro lints without throwing', () => {
+  it('every prefix of a realistic macro lints without throwing', () => {
     const macro = src(
       'var a = {1, 2, 3}', 'var s = "x"', 'while iterations < #var.a', '  if var.a[iterations] > 1 && -var.a[0] < 0',
       '    set var.s = var.s ^ var.a[iterations]', '  elif move.axes[0].homed', '    continue', 'G1 X{var.a[0] * 2} F{max(1, 2)}',
       'echo >"0:/x.g" "set global.g = " ^ var.s', 'abort "done " ^ var.s');
     for (let i = 0; i <= macro.length; i += 3) assert.doesNotThrow(() => lintTc(macro.slice(0, i)), String(i));
   });
-  guard('TC-ROB-02', 'the corpus lints in under 3x the time without the checker', () => {
-    if (!corpusAvailable()) return;
-    const t0 = Date.now(); lintCorpus({ typeCheck: { enabled: false } }); const off = Date.now() - t0;
-    const t1 = Date.now(); lintCorpus({ typeCheck: { enabled: true } }); const on = Date.now() - t1;
+  it('a 300-file workspace lints in under 3x the time without the checker', () => {
+    const big = scaledWorkspace(22);
+    assert.ok(Object.keys(big).length >= 300, `${Object.keys(big).length} files`);
+    const t0 = Date.now(); lintWorkspace(big, { typeCheck: { enabled: false } }); const off = Date.now() - t0;
+    const t1 = Date.now(); lintWorkspace(big, { typeCheck: { enabled: true } }); const on = Date.now() - t1;
     assert.ok(on <= 3 * off + 300, `on ${on} ms vs off ${off} ms`);
   });
-  guard('TC-ROB-03', 'deterministic', () => {
+  it('deterministic', () => {
     const t = src('var x = 1', 'if move.axes[0].homed', '  set var.x = "s"', 'echo var.x + 1, "a" + 1');
     assert.deepEqual(typeDiags(t).map(describeDiag), typeDiags(t).map(describeDiag));
   });
-  guard('TC-ROB-03', 'independent of the order the workspace was indexed in', () => {
-    if (!corpusAvailable()) return;
-    assert.deepEqual(corpusTypeDiags(undefined, true), corpusTypeDiags(undefined, false));
+  it('independent of the order the workspace was indexed in', () => {
+    const docs = { ...WORKSPACE, 'untitled:macros/Misuse': src('echo global.bedMode * 2', 'echo -global.servoAngle', 'echo global.purgeLength ^ "mm"') };
+    const run = (reverseIndexOrder: boolean) =>
+      lintWorkspace(docs, { typeCheck: { enabled: true }, reverseIndexOrder }).map(r => r.diagnostics.map(describeDiag));
+    const forward = run(false);
+    assert.ok(forward.flat().length > 0, 'the misuse file must produce diagnostics, or the comparison proves nothing');
+    assert.deepEqual(run(true), forward);
   });
-  guard('TC-ROB-04', 'deep nesting does not overflow', () => {
+  it('deep nesting does not overflow', () => {
     assert.doesNotThrow(() => lintTc(`echo ${'('.repeat(200)}1${')'.repeat(200)} + 1`));
     assert.doesNotThrow(() => lintTc(`echo ${Array.from({ length: 100 }, (_, i) => `move.axes[0].homed ? ${i} :`).join(' ')} 0`));
     assert.doesNotThrow(() => lintTc(`echo ${Array.from({ length: 300 }, () => '1').join(' + ')}`));

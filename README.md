@@ -91,7 +91,7 @@ This extension contributes the following settings:
 
 * `rrfgcode.activateOnGenericGcode` (bool, default `true`): Enable LSP features for generic non-RRF G-code files.
 * `rrfgcode.typeCheck.enabled` (bool, default `true`): Report expressions whose types RepRapFirmware would reject at runtime.
-* `rrfgcode.rrfVersion` (string, default `""`): Target firmware version, e.g. `3.5.4`. Functions and constants added later (`round`, `take`, `input`, …) are reported. Empty accepts everything the newest firmware knows; `3.5.4-vm.1` means `3.5.4`.
+* `rrfgcode.rrfVersion` (`""`, `3.5`, `3.6` or `3.7`, default `""`): Target RepRapFirmware line, each meaning its latest release. Functions added later (`round`, `take`, `drop`, `find`, `square` need 3.6) are reported on an older line. Empty accepts everything the newest firmware knows.
 * `rrfgcode.maxLineLength` (integer, default `255`): Report an error when a command exceeds this many bytes. Only the command part counts — indentation, `N` line numbers, `*` checksums and `;` comments are excluded, because RepRapFirmware never stores them in its G-code input buffer. The default matches current firmware (256-byte buffer including the terminator); older RRF 3.0–3.3 builds only accept 100–160 bytes. Set to `0` to disable the check.
 
 ### Argument Validation Settings
@@ -263,9 +263,26 @@ fileexists("probe.g")     -> <sd-root>/sys/probe.g
 
 Paths containing URLs, backslashes, null bytes, or paths escaping outside the detected SD-card root are rejected by the path resolver.
 
+## Development
+
+```sh
+npm install          # at the repository root; also installs client/ and server/
+cd server && npm test
+```
+
+### Testing on your own configuration
+
+`npm test` is self-contained. To also lint a real printer configuration, point `RRF_CONFIG_DIR` at any RRF SD-card tree (`sys/`, `macros/`, `filaments/` …) or a repository that holds one:
+
+```sh
+RRF_CONFIG_DIR=/path/to/config npm run test:config
+```
+
+Files are found the way the extension's workspace scan finds them (print jobs under `gcodes/` are skipped), and `rrfgcode.*` settings are read from `<dir>/.vscode/settings.json` when it exists. The run checks that nothing throws, that the configuration has no Error diagnostics, that every G/M code has documentation, and that the type checker adds no diagnostics and removes none. It also lists the warnings by message. A configuration that runs on a printer should pass, so each failure is either a false positive of the extension or a real bug in the configuration. Without `RRF_CONFIG_DIR` these tests are skipped.
+
 ## Known Issues
 
-* **No type checking**: RRF G-code is dynamically typed. The LSP does not perform full static type inference.
+* **Type checking reports definite errors only**: values the server cannot see (macro parameters, `input`, unknown object-model fields) are `unknown`, and an expression is reported only when it fails for every type its operands can have. G-code parameter values (`G1 X{"10"}`) are not type-checked, and object-model numbers are not split into integer and float.
 * **Runtime paths are not evaluated**: Expressions such as `P{var.path}` are skipped by design.
 * **Fallback F12 is not a diagnostic source**: Strict fallback path detection is used only for `Go to Definition`; it does not emit "file not found" warnings for arbitrary strings.
 * **Multi-root workspaces**: Settings are read once per server instance rather than per workspace folder, so a setting overridden in one folder of a multi-root workspace is not honored for files in that folder.

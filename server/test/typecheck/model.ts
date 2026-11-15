@@ -1,6 +1,6 @@
 // Reference model of RepRapFirmware expression typing — the ORACLE behind the generated spec tests.
 //
-// Hand-transcribed from the fork the printers run (tag 3.5.4-vm.1):
+// Hand-transcribed from RepRapFirmware (upstream tag 3.5.4):
 //   ExpressionParser::ParseInternal          unary and binary operators
 //   ExpressionParser::BalanceNumericTypes    + - * mod pow min max
 //   ExpressionParser::BalanceTypes           < > <= >= == !=
@@ -240,34 +240,5 @@ export function argLiteral(fn: string, t: Ty): string {
 
 // ── Version tables (upstream tags, NamedEnum(Function, …)) ───────────────────
 
-export interface Introduced { version: string; names: string[] }
-export const FUNCTIONS_INTRODUCED: Introduced[] = [
-  { version: '3.3.0', names: ['abs', 'acos', 'asin', 'atan', 'atan2', 'cos', 'degrees', 'exists', 'floor', 'isnan', 'max', 'min', 'mod', 'radians', 'random', 'sin', 'sqrt', 'tan'] },
-  { version: '3.4.0', names: ['datetime'] },
-  { version: '3.5.0', names: ['ceil', 'exp', 'fileexists', 'fileread', 'log', 'pow', 'vector'] },
-  { version: '3.6.0-beta.4', names: ['drop', 'find', 'take'] },
-  { version: '3.6.0-rc.2', names: ['square'] },
-  { version: '3.6.0-rc.3', names: ['round'] },
-];
-export const CONSTANTS_INTRODUCED: Introduced[] = [
-  { version: '3.3.0', names: ['false', 'iterations', 'line', 'null', 'pi', 'result', 'true'] },
-  { version: '3.5.0', names: ['input'] },
-];
-export const STRING_INDEXING_FROM = '3.6.0-beta.4';
-
-export function introducedIn(fn: string): string | undefined {
-  return FUNCTIONS_INTRODUCED.find(i => i.names.includes(fn))?.version;
-}
-
-/** Semver-ish compare per TC-CFG-03 (alpha < beta < rc < release; unknown suffixes ignored). */
-export function compareVersions(a: string, b: string): number {
-  const parse = (v: string) => {
-    const m = /^(\d+)\.(\d+)(?:\.(\d+))?(?:-(alpha|beta|rc)\.(\d+))?/.exec(v);
-    if (!m) throw new Error(`bad version ${v}`);
-    const pre = m[4] ? { alpha: 0, beta: 1, rc: 2 }[m[4]]! : 3;
-    return [Number(m[1]), Number(m[2]), Number(m[3] ?? 0), pre, Number(m[5] ?? 0)];
-  };
-  const x = parse(a), y = parse(b);
-  for (let i = 0; i < x.length; i++) if (x[i] !== y[i]) return x[i] - y[i];
-  return 0;
-}
+/** Functions RepRapFirmware 3.5 lacks; 3.6 and 3.7 have them (NamedEnum(Function, …) in 3.5.4, 3.6.3, 3.7.0). */
+export const FUNCTIONS_FROM_3_6: readonly string[] = ['drop', 'find', 'round', 'square', 'take'];

@@ -6,4 +6,3 @@ tsconfig.tsbuildinfo
 .vscode
 *.vsix
 out-test
-server/test/corpus/

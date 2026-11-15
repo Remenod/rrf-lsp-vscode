@@ -14,6 +14,6 @@
   "scripts": {
     "build:test": "tsc -p tsconfig.test.json",
     "test": "npm run build:test && node --test \"out-test/test/**/*.test.js\"",
-    "corpus:fetch": "bash ../scripts/fetch-corpus.sh"
+    "test:config": "npm run build:test && node --test \"out-test/test/config/*.test.js\""
   }
 }
