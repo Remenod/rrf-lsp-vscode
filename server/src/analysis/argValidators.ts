@@ -44,7 +44,7 @@ export interface ExtractedArg {
 export type ArgValidator = (a: ArgContext) => Diagnostic[] | Diagnostic | null;
 
 /** How a static path should be checked. */
-export type PathCheckMode = 'exists' | 'directory-exists' | 'parent-exists';
+export type PathCheckMode = 'exists' | 'directory-exists' | 'parent-exists' | 'none';
 
 export interface PathResolveOptions {
     /**
@@ -112,7 +112,7 @@ function validateStaticPath(
     mode: PathCheckMode,
     resolve?: PathResolveOptions,
 ): Diagnostic | null {
-    if (rrfPath.trim() === '') return null;
+    if (mode === 'none' || rrfPath.trim() === '') return null;
     if (!a.sdRoot) return null;
 
     const resolved = resolveRrfPathToDisk(rrfPath, a.sdRoot, resolve);
@@ -604,7 +604,7 @@ registerArg('M375', 'P', 'exists', { defaultRelativeDir: 'sys' }); // load heigh
 registerArg('M470', 'P', 'parent-exists');          // create directory
 registerArg('M471', 'S', 'exists');                 // rename/move source
 registerArg('M471', 'T', 'parent-exists');          // rename/move target parent; target may not exist
-registerArg('M472', 'P', 'exists');                 // delete file/directory
+registerArg('M472', 'P', 'none');                   // delete file/directory: it may already be gone
 registerArg('M505', 'P', 'directory-exists', { defaultRelativeDir: 'sys' });
 registerArg('M505.1', 'P', 'directory-exists', { defaultRelativeDir: 'www' });
 registerArg('M929', 'P', 'parent-exists');          // event log file, created/appended

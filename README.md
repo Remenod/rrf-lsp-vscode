@@ -137,7 +137,6 @@ if fileexists("probe.g")     ; resolves under /sys, like M98
 ```gcode
 M98 P"sys/mymacro.g"    ; warns if the file does not exist
 M20 P"0:/gcodes"        ; validates that the directory exists
-M472 P"sys/foobar"      ; validates that the file or directory exists
 ```
 
 ### Command Length Check
@@ -220,7 +219,7 @@ The following commands are currently validated for file-path or directory-path a
 | `M470`   |       `P` | `parent-exists`             | SD root            | Create directory.                                                                  |
 | `M471`   |       `S` | `exists`                    | SD root            | Rename/move source file or directory.                                             |
 | `M471`   |       `T` | `parent-exists`             | SD root            | Rename/move target path.                                                           |
-| `M472`   |       `P` | `exists`                    | SD root            | Delete file or directory.                                                          |
+| `M472`   |       `P` | not flagged                 | SD root            | Delete file or directory; it may already be gone.                                  |
 | `M505`   |       `P` | `directory-exists`          | `/sys`             | Set configuration file folder.                                                     |
 | `M505.1` |       `P` | `directory-exists`          | `/www`             | Set HTTP server root folder.                                                       |
 | `M929`   |       `P` | `parent-exists`             | SD root            | Event log file path.                                                               |

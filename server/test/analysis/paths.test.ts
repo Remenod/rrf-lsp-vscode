@@ -49,7 +49,6 @@ describe('paths: parameter-based commands — existing passes, missing warns', (
     ['M36.1 P', 'M36.1 P"test.gcode"', 'M36.1 P"nope.gcode"'],
     ['M37 P', 'M37 P"test.gcode"', 'M37 P"nope.gcode"'],
     ['M471 S', 'M471 S"data.csv" T"moved.csv"', 'M471 S"nope.csv" T"moved.csv"'],
-    ['M472 P', 'M472 P"data.csv"', 'M472 P"nope.csv"'],
     ['M505 P', 'M505 P"lib"', 'M505 P"nodir"'],
     ['M505.1 P', 'M505.1 P"/www"', 'M505.1 P"/nodir"'],
     ['M997 P', 'M997 P"Duet3Firmware_MB6HC.bin"', 'M997 P"missing.bin"'],
@@ -131,9 +130,13 @@ describe('paths: default folders for bare relative names', () => {
   it('M956 -> /sys/accelerometer (parent exists)', () => {
     assert.deepEqual(msgs(notFound(L('M956 F"log.csv"'))), []);
   });
-  it('M472 -> SD root', () => {
-    assert.deepEqual(msgs(notFound(L('M472 P"data.csv"'))), []);
-    assert.equal(notFound(L('M472 P"homeall.g"')).length, 1);
+  it('M472 never warns: deleting a file that is already gone is fine', () => {
+    for (const t of ['M472 P"data.csv"', 'M472 P"nope.csv"', 'M472 P"0:/sys/old.g"', 'M472 P"nodir/x.g"'])
+      assert.deepEqual(msgs(notFound(L(t))), [], t);
+  });
+  it('fileexists never warns: testing for a missing file is its purpose', () => {
+    for (const t of ['if fileexists("nope.g")\n  echo 1', 'if !fileexists("0:/nodir/x.g")\n  M472 P"0:/nodir/x.g"'])
+      assert.deepEqual(msgs(notFound(L(t))), [], t);
   });
 });
 
