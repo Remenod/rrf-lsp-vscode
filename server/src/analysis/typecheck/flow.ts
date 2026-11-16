@@ -14,7 +14,7 @@ import { Node, parseExpression, parseList, unwrap } from './ast';
 import { Ty, UNKNOWN, BOTTOM, union, lacksAll, describe, key, isUnknown, atoms, prim } from './types';
 import { Typer, Scope, TypeDiag, CODE, MSG, narrowFacts, applyFact, NarrowFact, R } from './infer';
 import { Version } from './versions';
-import { checkParamValue } from './params';
+import { checkParamValue, checkLiteralValue, LiteralForm } from './params';
 import { commandKey, isBuiltIn } from '../gcodeParams';
 import { stringLiteralText } from '../argValidators';
 
@@ -148,7 +148,22 @@ interface MacroCall {
     args: Array<{ letter: string; at: number; node: Node | null }>;
 }
 
-interface GLine { values: GValue[]; calls: MacroCall[] }
+/** An unbraced parameter value (`F"test"`, `Y40`, `Ythermistor`), or a quoted element after `:`. */
+interface GLiteral {
+    command: string; letter: string; element: boolean; form: LiteralForm; text: string;
+    start: number; end: number; macroArg: boolean;
+}
+
+interface GLine { values: GValue[]; calls: MacroCall[]; literals: GLiteral[] }
+
+const NUMBER_START = new Set([TokenType.Integer, TokenType.Float, TokenType.HexInteger, TokenType.BinInteger, TokenType.Minus, TokenType.Plus]);
+
+/** The end index (exclusive) of the run of tokens that touch each other from t[i]. */
+function adjacentRun(t: Token[], i: number, end: number): number {
+    let j = i + 1;
+    while (j < end && t[j].start === t[j - 1].end && t[j].type !== TokenType.EOF && t[j].type !== TokenType.Comment) j++;
+    return j;
+}
 
 /** The letter whose value the token at `i` continues, walking back over `1:{…}:` elements. */
 function valueLetter(tokens: Token[], i: number): string | null {
@@ -235,6 +250,7 @@ function macroCall(t: Token[], [start, end]: [number, number]): MacroCall | null
 
 const gcodeLine = (s: Stmt) => cached<GLine>(s, () => {
     const values: GValue[] = [];
+    const literals: GLiteral[] = [];
     const t = s.tokens;
     const segs = commandSegments(t);
     const calls = segs.map(seg => macroCall(t, seg)).filter((c): c is MacroCall => c !== null);
@@ -248,6 +264,22 @@ const gcodeLine = (s: Stmt) => cached<GLine>(s, () => {
         let from = -1;
         for (let i = start; i < end; i++) {
             const tt = t[i].type;
+            if (depth === 0 && i > start && tt !== TokenType.LBrace && tt !== TokenType.EOF && tt !== TokenType.Comment) {
+                const before = t[i - 1];
+                const atValue = before.type === TokenType.GCodeWord && t[i].start === before.end;
+                const letter = atValue ? before.value.toUpperCase() : before.type === TokenType.Colon ? valueLetter(t, i) : null;
+                const form: LiteralForm | null = tt === TokenType.StringLit ? 'quoted'
+                    : before.type === TokenType.Colon ? null
+                        : NUMBER_START.has(tt) ? 'number' : tt === TokenType.GCodeWord || tt === TokenType.Identifier ? 'word' : null;
+                if (letter && form) {
+                    const stop = form === 'quoted' ? i + 1 : adjacentRun(t, i, end);
+                    literals.push({
+                        command, letter, element: before.type === TokenType.Colon, form,
+                        text: s.text.slice(t[i].start, t[stop - 1].end),
+                        start: t[i].start, end: t[stop - 1].end, macroArg: macroArgs && letter !== 'P',
+                    });
+                }
+            }
             if (tt === TokenType.LBrace && depth++ === 0) from = i;
             else if (tt === TokenType.RBrace && depth > 0 && --depth === 0) {
                 const before = t[from - 1];
@@ -261,7 +293,7 @@ const gcodeLine = (s: Stmt) => cached<GLine>(s, () => {
             }
         }
     }
-    return { values, calls };
+    return { values, calls, literals };
 });
 
 /** The macro calls of a document, without types: which files it runs (TC-PRM-01). */
@@ -590,6 +622,14 @@ class Walker {
                     if (command && v.letter && !v.macroArg) this.parameter(s, command, v, r, ctx);
                 }
                 if (this.opts.contribute) for (const c of g?.calls ?? []) this.call(s, c, braced, env, ctx);
+                if (!ctx.silent && this.opts.report) {
+                    for (const q of g?.literals ?? []) {
+                        const command = commandKey(q.command);
+                        const message = command && !q.macroArg
+                            ? checkLiteralValue(command, q.letter, q.element, q.form, q.text, this.opts.version, this.opts.sbc ?? false) : null;
+                        if (message) this.result.diagnostics.push({ line: s.line, start: q.start, end: q.end, code: CODE.argument, severity: 'error', message });
+                    }
+                }
                 return s.tokens[0].value.toUpperCase() === 'M99' ? null : env;
             }
             default:

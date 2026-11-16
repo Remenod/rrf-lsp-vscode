@@ -113,3 +113,60 @@ export function checkParamValue(command: string, letter: string, element: boolea
     }
     return message && `parameter ${letter} of ${command} ${message}`;
 }
+
+const NUMERIC_KINDS = new Set(['float', 'int', 'uint', 'bool', 'driver']);
+
+/** How an unbraced value is written: `"…"`, a number (`40`, `-1`), or a bare word (`Ythermistor`). */
+export type LiteralForm = 'quoted' | 'number' | 'word';
+
+/**
+ * The message for an unbraced value the firmware cannot read for `letter`, or null:
+ *  * a quoted string where every kind is numeric (`M558 F"test"`): ReadFloatValue, ReadIValue,
+ *    ReadUIValue and ReadDriverIdValue evaluate only a value that starts with `{`, so the converter
+ *    finds no digit and CheckNumberFound stops with "expected number after 'F'";
+ *  * a number or a bare word where every kind is a quoted string (`M308 Y40`): GetQuotedString
+ *    (and GetReducedString) take only `"…"` or `{…}` and stop with "expected a string expression";
+ *  * anything but `{…}` where the value is an expression (`M291 K"a"`): GetExpression stops with
+ *    "expected an expression inside { }".
+ * `element`: a value after `:` in a list, which only a list getter reads.
+ */
+export function checkLiteralValue(command: string, letter: string, element: boolean, form: LiteralForm, text: string,
+    version: Version | null, sbc: boolean): string | null {
+    const lines = version ? [version] : paramLines();
+    let message: string | null = null;
+    for (const line of lines) {
+        const kinds = paramKinds(command, letter, line, sbc);
+        if (!kinds) return null;
+        message = literalFailure(command, letter, element, form, text, kinds);
+        if (!message) return null;
+    }
+    return message;
+}
+
+function literalFailure(command: string, letter: string, element: boolean, form: LiteralForm, text: string, kinds: string[]): string | null {
+    const head = `parameter ${letter} of ${command}`;
+    if (form === 'quoted') {
+        const bases = new Map<string, boolean>();
+        for (const k of kinds) {
+            const list = k.endsWith('[]');
+            const base = list ? k.slice(0, -2) : k;
+            if (base === 'any' && !element && kinds.every(x => x === 'any')) {
+                return `${head} needs an expression in {…}, got a quoted string: the firmware stops with "expected an expression inside { }"`;
+            }
+            if (!NUMERIC_KINDS.has(base)) return null;
+            if (element && !list) return null;
+            bases.set(base, (bases.get(base) ?? false) || (list && !element));
+        }
+        const needs = [...new Set([...bases].map(([base, asList]) => (asList ? RULES[base].needList : RULES[base].need)))];
+        return `${head} needs ${needs.join(' or ')}, got a quoted string: ` +
+            `the firmware only evaluates a value that starts with '{', so it stops with "expected number after '${letter}'"`;
+    }
+    if (element) return null;
+    if (kinds.every(k => k === 'string')) {
+        return `${head} needs a quoted string or {…}, got ${text}: write ${letter}"${text}"; the firmware stops with "expected a string expression"`;
+    }
+    if (kinds.every(k => k === 'any')) {
+        return `${head} needs an expression in {…}, got ${text}: the firmware stops with "expected an expression inside { }"`;
+    }
+    return null;
+}

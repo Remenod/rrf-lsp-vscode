@@ -400,6 +400,21 @@ mode most type errors are suppressed, but some checks run unconditionally.
 - `TC-GC-06` — with a target line, that line's table and conversions decide. With no target a
   value is an error only when every line reads the letter and rejects the value; the message is
   the newest line's. A command one line lacks (`M581.1` before 3.7) is then not checked.
+- `TC-GC-08` — a value not in braces is checked by how it is written:
+  * a quoted string as the value (`M558 F"test"`), or as an element after a colon of a list, of a
+    letter every kind of which is numeric (number, integer, flag, driver ID, or a list of them):
+    `ReadFloatValue`, `ReadIValue`, `ReadUIValue` and `ReadDriverIdValue` evaluate only a value that
+    starts with `{`, so the converter finds no digit and `CheckNumberFound` stops with
+    `"expected number after 'F'"`;
+  * a number or a bare word (`M308 Y40`, `M308 Ythermistor`, `M98 P5`) for a letter read only as a
+    quoted string: `GetQuotedString` and `GetReducedString` take `"…"` or `{…}` and stop with
+    `"expected a string expression"` (`BinaryParser` with a single-board computer too);
+  * anything but `{…}` for a letter read as an expression (`M291 K"a"`): `GetExpression` stops with
+    `"expected an expression inside { }"`.
+
+  Only a value written directly after its letter is checked. Letters read as text
+  (`GetPossiblyQuotedString`: `M550 PMyPrinter`), as a string or a number (`GetStringOrUIValue`:
+  `M669 K5`) or as an address are not.
 - `TC-GC-07` — with `rrfgcode.sbc`, the commands DuetSoftwareFramework reads itself
   (`MCodes.Process`, the `sbc` list of the table: `M20`–`M39`, `M98`, `M929`, …) are not checked;
   other commands are.

@@ -183,3 +183,30 @@ describe('TC-GC-07: single-board computer', () => {
     expectTypes('G1 X{"10"}', [{ code: CODE.argument, at: '"10"' }], { sbc: true });
   });
 });
+
+describe('TC-GC-08: a quoted string where the firmware reads a number', () => {
+  rule('TC-GC-08', 'the value of a numeric letter', () => {
+    expectTypes('M558 P8 C"io2.in" H5 F"test" T6000', [{ code: CODE.argument, at: '"test"', firmware: "expected number after 'F'", mentions: ['parameter F of M558'] }]);
+    expectTypes('M291 P"x" S"2"', [{ code: CODE.argument, at: '"2"', firmware: "expected number after 'S'" }]);
+    expectTypes('M584 X"0.1"', [{ code: CODE.argument, at: '"0.1"', firmware: "expected number after 'X'" }]);
+  });
+  rule('TC-GC-08', 'an element of a numeric list', () => {
+    expectTypes('M92 E400:"x"', [{ code: CODE.argument, at: '"x"', firmware: "expected number after 'E'" }]);
+  });
+  rule('TC-GC-08', 'a number or a bare word where the firmware reads a quoted string', () => {
+    expectTypes('M308 S1 P"temp1" Y40 T100000 B4138', [{ code: CODE.argument, at: '40', firmware: 'expected a string expression', mentions: ['parameter Y of M308', /write Y"40"/] }]);
+    expectTypes('M308 S1 Ythermistor T100000', [{ code: CODE.argument, at: 'thermistor', firmware: 'expected a string expression' }]);
+    expectTypes('M98 P5', [{ code: CODE.argument, at: '5', firmware: 'expected a string expression' }]);
+  });
+  rule('TC-GC-08', 'anything but {…} where the firmware reads an expression', () => {
+    expectTypes('M291 P"x" S4 K"a"', [{ code: CODE.argument, at: '"a"', firmware: 'expected an expression inside { }' }]);
+  });
+  guard('TC-GC-08', 'quoted or braced strings, letters read as text, a string or a number, an address', () => {
+    for (const t of ['M308 S1 Y"thermistor"', 'M308 S1 Y{"thermistor"}', 'M550 PMyPrinter', 'M669 K5', 'M552 P192.168.1.1', 'M291 P"x" S4 K{"a","b"}', 'G28XY', 'G1X10Y20F600'])
+      expectNoTypes(t);
+  });
+  guard('TC-GC-08', 'letters that may be text, a single value before a colon, macro arguments', () => {
+    for (const t of ['M308 S0 Y"thermistor"', 'M552 P"192.168.1.1"', 'M669 K"coreXY"', 'G1 X1:"a"', 'M98 P"x.g" S"a"', 'M1234 S"a"'])
+      expectNoTypes(t);
+  });
+});
