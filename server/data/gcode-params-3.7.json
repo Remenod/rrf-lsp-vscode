@@ -4,7 +4,10 @@
   "firmware": "RepRapFirmware 3.7.0",
   "canlib": "CANlib 3.7.0",
   "sbc": "DuetSoftwareFramework v3.7.0",
-  "kinds": "float, int, uint, bool, string, ip, mac, driver (n or board.n), any; [] is a colon-separated list; the letter \"axes\" stands for every axis letter, \"?\" for any letter of the command"
+  "kinds": "float, int, uint, bool, string (quoted or {\u2026}), text (may be unquoted), ip, mac, driver (n or board.n), any, seen (looked at, its value not read); [] is a colon-separated list; the letter \"axes\" stands for every axis letter, \"?\" for any letter of the command",
+  "open": "commands whose letters the generator cannot all account for, and why",
+  "required": "letters every run of the command needs (MustSee): \"P|S\" is either",
+  "requires": "letters a present letter needs"
  },
  "commands": {
   "G0": {
@@ -64,7 +67,9 @@
   "G19": {},
   "G20": {},
   "G21": {},
-  "G28": {},
+  "G28": {
+   "axes": "seen"
+  },
   "G29": {
    "K": "uint",
    "P": "string",
@@ -127,6 +132,7 @@
   "G68": {
    "A": "float",
    "B": "float",
+   "I": "seen",
    "R": "float",
    "X": "float",
    "Y": "float"
@@ -136,6 +142,8 @@
   "G91": {},
   "G92": {
    "E": "float",
+   "X": "seen",
+   "Y": "seen",
    "axes": "float"
   },
   "G93": {},
@@ -156,15 +164,17 @@
   },
   "M17": {
    "E": "uint[]",
-   "S": "float"
+   "S": "float",
+   "axes": "seen"
   },
   "M18": {
    "E": "uint[]",
-   "S": "float"
+   "S": "float",
+   "axes": "seen"
   },
   "M20": {
    "C": "int",
-   "P": "string",
+   "P": "text",
    "R": "uint",
    "S": "int"
   },
@@ -205,7 +215,7 @@
   },
   "M37": {
    "F": "uint",
-   "P": "string",
+   "P": "text",
    "S": "uint"
   },
   "M38": {},
@@ -233,7 +243,8 @@
   "M83": {},
   "M84": {
    "E": "uint[]",
-   "S": "float"
+   "S": "float",
+   "axes": "seen"
   },
   "M85": {},
   "M92": {
@@ -607,7 +618,9 @@
    "R": "float",
    "S": "uint"
   },
-  "M453": {},
+  "M453": {
+   "S": "seen"
+  },
   "M470": {
    "P": "string"
   },
@@ -622,6 +635,7 @@
   },
   "M486": {
    "A": "string",
+   "C": "seen",
    "P": "uint",
    "S": "int|uint",
    "T": "uint",
@@ -644,10 +658,10 @@
    "P": "mac"
   },
   "M550": {
-   "P": "string"
+   "P": "text"
   },
   "M551": {
-   "P": "string"
+   "P": "text"
   },
   "M552": {
    "I": "uint",
@@ -778,6 +792,7 @@
    "C": "float",
    "D": "float",
    "E": "float[]",
+   "H": "seen",
    "I": "float",
    "P": "driver|driver[]",
    "Q": "float",
@@ -796,7 +811,8 @@
    "V": "uint"
   },
   "M569.3": {
-   "P": "driver[]"
+   "P": "driver[]",
+   "S": "seen"
   },
   "M569.4": {
    "P": "driver|driver[]",
@@ -868,7 +884,8 @@
   },
   "M577": {
    "P": "uint[]",
-   "S": "uint"
+   "S": "uint",
+   "axes": "seen"
   },
   "M579": {
    "axes": "float"
@@ -877,7 +894,8 @@
    "P": "int|uint[]",
    "R": "int",
    "S": "int",
-   "T": "uint"
+   "T": "uint",
+   "axes": "seen"
   },
   "M581.1": {
    "P": "int|string",
@@ -997,9 +1015,7 @@
    "S": "uint",
    "axes": "float[]"
   },
-  "M600": {
-   "P": "uint"
-  },
+  "M600": {},
   "M601": {
    "P": "uint"
   },
@@ -1018,6 +1034,7 @@
   },
   "M665": {
    "B": "float",
+   "D": "seen",
    "H": "float",
    "L": "float[]",
    "R": "float",
@@ -1087,13 +1104,15 @@
   },
   "M673": {
    "F": "float",
-   "S": "float"
+   "S": "float",
+   "axes": "seen"
   },
   "M675": {
    "F": "float",
    "K": "uint",
    "P": "uint",
-   "R": "float"
+   "R": "float",
+   "axes": "seen"
   },
   "M701": {
    "P": "bool",
@@ -1107,8 +1126,8 @@
    "Z": "float"
   },
   "M905": {
-   "P": "string",
-   "S": "string"
+   "P": "text",
+   "S": "text"
   },
   "M906": {
    "E": "float[]",
@@ -1135,7 +1154,8 @@
    "P": "driver[]",
    "R": "uint",
    "S": "int",
-   "T": "uint"
+   "T": "uint",
+   "axes": "seen"
   },
   "M916": {},
   "M917": {
@@ -1208,7 +1228,10 @@
    "A": "uint",
    "F": "string",
    "P": "uint",
-   "S": "uint"
+   "S": "uint",
+   "X": "seen",
+   "Y": "seen",
+   "Z": "seen"
   },
   "M957": {
    "B": "uint",
@@ -1259,6 +1282,127 @@
    "T": "int"
   }
  },
+ "open": {
+  "G29": [
+   "it passes its letters to a macro"
+  ],
+  "G32": [
+   "it passes its letters to a macro"
+  ],
+  "M23": [
+   "it takes the rest of the line"
+  ],
+  "M28": [
+   "it takes the rest of the line"
+  ],
+  "M30": [
+   "it takes the rest of the line"
+  ],
+  "M32": [
+   "it takes the rest of the line"
+  ],
+  "M36": [
+   "it takes the rest of the line"
+  ],
+  "M38": [
+   "it takes the rest of the line"
+  ],
+  "M98": [
+   "it passes its letters to a macro"
+  ],
+  "M117": [
+   "it takes the rest of the line"
+  ],
+  "M409": [
+   "context() is not in the sources"
+  ]
+ },
+ "required": {
+  "M26": [
+   "S"
+  ],
+  "M42": [
+   "P",
+   "S"
+  ],
+  "M118": [
+   "S"
+  ],
+  "M261": [
+   "B"
+  ],
+  "M261.1": [
+   "B"
+  ],
+  "M261.2": [
+   "B"
+  ],
+  "M261.3": [
+   "B"
+  ],
+  "M261.4": [
+   "B"
+  ],
+  "M280": [
+   "P",
+   "S"
+  ],
+  "M291": [
+   "P"
+  ],
+  "M307": [
+   "H"
+  ],
+  "M308": [
+   "S"
+  ],
+  "M470": [
+   "P"
+  ],
+  "M471": [
+   "S",
+   "T"
+  ],
+  "M472": [
+   "P"
+  ],
+  "M560": [
+   "P"
+  ],
+  "M563": [
+   "P"
+  ],
+  "M570": [
+   "H"
+  ],
+  "M575": [
+   "P"
+  ],
+  "M582": [
+   "T"
+  ],
+  "M591": [
+   "D"
+  ],
+  "M592": [
+   "D"
+  ],
+  "M952": [
+   "B"
+  ],
+  "M954": [
+   "A"
+  ],
+  "M956": [
+   "A",
+   "P",
+   "S"
+  ],
+  "M957": [
+   "E"
+  ]
+ },
+ "requires": {},
  "sbc": [
   "M0",
   "M1",

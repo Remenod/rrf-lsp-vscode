@@ -26,8 +26,13 @@ The C++ is read as text, without a compiler:
     CanMessageGenericConstructor::PopulateFromCommand reads its descriptor type.
 
 A read whose letter cannot be told from the text is recorded under "?"; its kinds may be those of
-any letter of the command. With a single-board computer, DuetSoftwareFramework reads some
-commands itself (MCodes.Process); those are listed under "sbc".
+any letter of the command. A letter only looked at (`G28 X`) is `seen`. With a single-board
+computer, DuetSoftwareFramework reads some commands itself (MCodes.Process); those are listed
+under "sbc". "open" lists the commands whose letters the walk cannot all account for (a call it
+cannot follow, a dropped #if branch, letters passed to a macro, the rest of the line taken as
+text), so that no letter of theirs is called unknown. "required" lists the letters every run of a
+command needs (MustSee or GetLimited…Value in a statement every run reaches) and "requires" those a
+present letter needs (inside `if (gb.Seen('X'))`, or after `if (!gb.Seen('X')) { …; return; }`).
 
 A fractional command (M569.1) gets an entry of its own when the firmware tells that fraction
 apart (gb.GetCommandFraction() == 1, `switch (gb.GetCommandFraction())`) and does not hand it to
@@ -73,6 +78,9 @@ def brace_delta(lines):
     return depth
 
 
+LOSSY = '__lossy_if__'
+
+
 def flatten_conditionals(s):
     """Source with the preprocessor lines removed. Every branch of an #if group is kept when
     each closes the braces it opens; when one does not (`#if X  if (c) {  #else  {  #endif`)
@@ -94,9 +102,13 @@ def flatten_conditionals(s):
                 branches = branches[1:] or [[]]
             elif cond == '1':
                 branches = branches[:1]
+            lossy = False
             if any(brace_delta(b) for b in branches):
+                lossy = len(branches) > 1
                 branches = branches[:1]
             kept = [line for b in branches for line in b]
+            if lossy:
+                kept.append(LOSSY + ';')            # code here may read letters the kept branch does not
             groups[-1][0][-1].extend(kept)
         groups[-1][0][-1].append('')        # the directive line itself
     while len(groups) > 1:                  # an unterminated #if
@@ -116,6 +128,8 @@ for d, _, fs in sorted(os.walk(os.path.join(opts.rrf, 'src'))):
             s = re.sub(r'\b(?:pre|post)\s*\((?:[^()]|\([^()]*\))*\)', '', s)
             s = re.sub(r'(?m)^[ \t]*#.*$', '', s)                  # #define, #include …
             s = s.replace('INHERIT_OBJECT_MODEL', ': public ObjectModel')
+            # `if (!executing) { break; }`: the motion system that executes the command goes on
+            s = re.sub(r'\bBREAK_IF_NOT_EXECUTING\b', ';', s)
             files[p] = s
 
 
@@ -795,7 +809,67 @@ def pruned(fn, ints):
             else:
                 s = s[:a + 1] + blank(s[a + 1:then_end]) + s[then_end:]
                 stats['branches dropped'] += 1
+        s = prune_ternaries(s, ints)
     pruned_cache[key] = s
+    return s
+
+
+def ternary_parts(s, p):
+    """For the `?` just before s[p]: (index of its `:`, end of the expression after it), or (None, None)."""
+    depth, nested, q = 0, 0, p
+    colon = None
+    while q < len(s):
+        c = s[q]
+        if c in '"\'':
+            q = skip_string(s, q)
+            continue
+        if c in '([{':
+            depth += 1
+        elif c in ')]}':
+            if depth == 0:
+                break
+            depth -= 1
+        elif depth == 0 and c == '?':
+            nested += 1
+        elif depth == 0 and c == ':' and s[q + 1:q + 2] != ':' and s[q - 1:q] != ':':
+            if nested == 0 and colon is None:
+                colon = q
+            elif nested:
+                nested -= 1
+        elif depth == 0 and c in ';,' and colon is not None:
+            break
+        q += 1
+    return (colon, q) if colon is not None else (None, None)
+
+
+def prune_ternaries(s, ints):
+    """`(gb.GetCommandFraction() > 4) ? TryMacroFile(gb) : …`: blank the alternative that cannot run."""
+    i = 0
+    while i < len(s):
+        c = s[i]
+        if c in '"\'':
+            i = skip_string(s, i)
+            continue
+        if c == '?':
+            j = i - 1
+            while j >= 0 and s[j].isspace():
+                j -= 1
+            if j >= 0 and s[j] == ')':
+                depth, k = 0, j
+                while k >= 0:
+                    depth += {')': 1, '(': -1}.get(s[k], 0)
+                    if depth == 0:
+                        break
+                    k -= 1
+                if k > 0 and not (s[k - 1].isalnum() or s[k - 1] == '_'):
+                    v = eval_cond(s[k + 1:j], ints)
+                    colon, end = ternary_parts(s, i + 1) if v is not None else (None, None)
+                    if colon is not None:
+                        if v:
+                            s = s[:colon + 1] + blank(s[colon + 1:end]) + s[end:]
+                        else:
+                            s = s[:i + 1] + blank(s[i + 1:colon]) + s[colon:]
+        i += 1
     return s
 
 # ── Commands forwarded to expansion boards ─────────────────────────────────────────
@@ -842,6 +916,7 @@ def can_table_reads(fn, pos):
     tables = re.findall(r'\bCanMessageGenericConstructor\s+\w+\s*\(\s*(\w+)\s*\)', fn.body[:pos])
     if not tables or tables[-1] not in can_tables:
         stats['unresolved'][f'CAN table in {fn.qual}: {tables[-1] if tables else "?"}'] += 1
+        out['__open'] = {'a CAN parameter table is not in the sources'}
         return out
     stats['can tables'].add(tables[-1])
     for macro, letter in can_tables[tables[-1]]:
@@ -864,8 +939,9 @@ GETTERS = {
     'GetUIValue': 'uint', 'GetLimitedUIValue': 'uint', 'TryGetUIValue': 'uint', 'TryGetLimitedUIValue': 'uint',
     'GetPwmFrequency': 'uint',
     'TryGetBValue': 'bool',
-    'GetQuotedString': 'string', 'GetPossiblyQuotedString': 'string', 'GetReducedString': 'string',
-    'TryGetQuotedString': 'string', 'TryGetPossiblyQuotedString': 'string',
+    'GetQuotedString': 'string', 'GetReducedString': 'string', 'TryGetQuotedString': 'string',
+    # The value may be written without quotes (to the end of the line or the next space).
+    'GetPossiblyQuotedString': 'text', 'TryGetPossiblyQuotedString': 'text',
     'GetStringOrUIValue': 'string|uint',
     'GetFloatArray': 'float[]', 'TryGetFloatArray': 'float[]',
     'GetIntArray': 'int[]',
@@ -894,6 +970,9 @@ unclassified = sorted({n for n in re.findall(r'\b((?:Try)?Get\w*)\s*\(', gcodebu
 if unclassified:
     raise SystemExit('GCodeBuffer methods to classify in GETTERS or NOT_VALUE_GETTERS: ' + ' '.join(unclassified))
 INT_TYPE = re.compile(r'(?:const\s+)?(?:unsigned\s+int|unsigned|int|u?int(?:8|16|32|64)_t|size_t|long)\s+(\w+)(?:\s*=.*)?')
+
+# Calls that take the GCodeBuffer without reading parameters.
+NOT_READERS = {'GCodeException', 'ThrowGCodeException'}
 
 memo = {}
 stats = {'calls followed': 0, 'branches dropped': 0, 'unresolved': defaultdict(int), 'can tables': set(),
@@ -930,10 +1009,13 @@ def analyse(fn, start, end, current, depth, stack, bindings):
     """letter -> kinds read in fn.body[start:end], given the letters last selected by Seen()."""
     out = defaultdict(set)
     if depth > 12:
+        out['__open'].add('the call chain is too deep to follow')
         return out
     gb = fn.gb
     text = pruned(fn, {k: v for k, v in bindings.items() if isinstance(v, int)})
     out['__fractions'] |= fraction_literals(fn, start, end)
+    if LOSSY in text[start:end]:
+        out['__open'].add(f'an #if branch of {fn.qual} is left out')
     pat = re.compile(r'\b' + re.escape(gb) + r'\s*(?:\.|->)\s*(\w+)\s*\(|\b(\w+)\s*\(')
     cur = set(current)
     selected = False                                            # whether a Seen() here chose `cur`
@@ -956,10 +1038,22 @@ def analyse(fn, start, end, current, depth, stack, bindings):
                     cur = set()
                 for x in args:
                     cur |= letters_of(x, fn, m.start(), bindings)
+                out['__seen'] |= cur
                 selected = True
                 last_seen_end = balanced(text, a)
+            elif name == 'SeenAny':
+                lits = re.findall(r'"([A-Za-z]*)"', ''.join(args))
+                if lits:
+                    out['__seen'] |= set(''.join(lits).upper())
+                else:
+                    out['__open'].add('SeenAny() of letters chosen at run time')
+            elif name in ('GetUnprecedentedString', 'GetCompleteParameters', 'AddParameters'):
+                out['__open'].add('it takes the rest of the line' if name != 'AddParameters' else 'it passes its letters to a macro')
             elif name in GETTERS:
-                for letter in (letters_of(args[0], fn, m.start(), bindings) if name in TAGGED and args else cur):
+                letters = letters_of(args[0], fn, m.start(), bindings) if name in TAGGED and args else cur
+                if name in TAGGED:
+                    out['__seen'] |= letters
+                for letter in letters:
                     out[letter] |= set(GETTERS[name].split('|'))
             else:
                 stats['other gb calls'][name] += 1
@@ -971,7 +1065,12 @@ def analyse(fn, start, end, current, depth, stack, bindings):
             for letter, ks in can_table_reads(fn, m.start()).items():
                 out[letter] |= ks
             continue
-        for c in callees(fn, name, m.start(2)):
+        if name in ('DoFileMacroWithParameters', 'TryMacroFile'):
+            out['__open'].add('it passes its letters to a macro')
+        found = callees(fn, name, m.start(2))
+        if not found and name not in NOT_READERS:
+            out['__open'].add(f'{name}() is not in the sources')
+        for c in found:
             bind = bind_params(c, args, fn, m.start(), bindings)
             key = (c.qual, id(c.body), frozenset(cur), frozenset(bind.items()))
             if key in stack:
@@ -988,6 +1087,120 @@ def analyse(fn, start, end, current, depth, stack, bindings):
     if selected:
         out['__selected'] = set(cur)
     return out
+
+# ── Letters a command needs ────────────────────────────────────────────────────────
+# Only what the firmware certainly asks for: GCodeBuffer::MustSee (and GetLimited…Value, which
+# calls it) in a statement every run reaches, unless it leaves first. A statement inside if, a loop
+# or a switch, or after &&, || or ?:, may not run; once a statement may leave (return, break,
+# throw), nothing after it is certain. `if (!LockMovement…(gb)) { return false; }` runs the command
+# again later, so it does not count as leaving.
+
+RETRY = re.compile(r'if\s*\(\s*!\s*\w*Lock\w*\s*\(\s*\w+\s*\)\s*\)\s*(?:\{\s*return\s+(?:false|GCodeResult::notFinished)\s*;\s*\}|'
+                   r'return\s+(?:false|GCodeResult::notFinished)\s*;)\s*$')
+EXIT = re.compile(r'\b(?:return|break|throw|continue|goto)\b')
+LITERALS = re.compile(r'"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'')
+req_memo = {}
+
+
+def single_letter(arg, fn, pos, bindings):
+    ls = letters_of(arg, fn, pos, bindings)
+    return next(iter(ls)) if len(ls) == 1 and next(iter(ls)) not in ('?', 'axes') else None
+
+
+def requirements(fn, start, end, bindings, depth=0, stack=frozenset()):
+    """(alternatives every run of fn.body[start:end] needs — 'S' or 'P|S' —, letter -> what it needs
+    when present, whether a statement may leave the range)."""
+    req, deps = set(), defaultdict(set)
+    if depth > 12:
+        return req, deps, True
+    gb = fn.gb
+    text = pruned(fn, {k: v for k, v in bindings.items() if isinstance(v, int)})
+    given = None                                                # a letter the rest runs only with
+
+    def add(r):
+        (deps[given] if given else req).add(r)
+
+    i = start
+    while i < end:
+        while i < end and (text[i].isspace() or text[i] == ';'):
+            i += 1
+        if i >= end:
+            break
+        j = min(statement_end(text, i), end)
+        t = LITERALS.sub('""', text[i:j]).strip()
+        if t.startswith('{'):
+            o = i + text[i:j].index('{')
+            r, d, left = requirements(fn, o + 1, balanced(text, o, '{', '}') - 1, bindings, depth, stack)
+            for x in r:
+                add(x)
+            for k, v in d.items():
+                deps[k] |= v
+            if left:
+                return req, deps, True
+            i = j
+            continue
+        if re.match(r'(?:if|while|for|switch|do|try|else)\b', t):
+            if RETRY.match(t):
+                i = j
+                continue
+            m = re.match(r'if\s*\(\s*(!?)\s*' + re.escape(gb) + r'\s*\.\s*Seen\s*\(([^()]*)\)\s*\)', t)
+            letter = single_letter(m.group(2), fn, i, bindings) if m else None
+            if letter:
+                b = i + text[i:j].index('(')
+                b = balanced(text, b)                           # after the condition
+                then_end = statement_end(text, b)
+                then = text[b:then_end].strip()
+                has_else = bool(re.match(r'\s*else\b', text[then_end:j]))
+                if not m.group(1):
+                    # if (gb.Seen('X')) { … MustSee('Y') … }: X needs Y
+                    o = b + text[b:then_end].index('{') if then.startswith('{') else None
+                    r, _, _ = requirements(fn, o + 1, balanced(text, o, '{', '}') - 1, bindings, depth, stack) if o is not None \
+                        else requirements(fn, b, then_end, bindings, depth, stack)
+                    deps[letter] |= {x for x in r if letter not in x.split('|')}
+                elif not has_else and not falls_through(then[1:-1] if then.startswith('{') else then) and given is None:
+                    # if (!gb.Seen('X')) { report; return; }: what follows runs only with X
+                    given = letter
+                    i = j
+                    continue
+            if EXIT.search(t):
+                return req, deps, True
+            i = j
+            continue
+        if not re.search(r'\?|&&|\|\|', t):
+            for m in re.finditer(r'\b' + re.escape(gb) + r'\s*(?:\.|->)\s*(MustSee|GetLimited(?:U?I|F)Value)\s*\(|\b(\w+)\s*\(', text[i:j]):
+                a = i + m.end() - 1
+                args = split_args(text[a + 1:balanced(text, a) - 1])
+                if m.group(1) == 'MustSee':
+                    alts = [single_letter(x, fn, i, bindings) for x in args]
+                    if alts and all(alts):
+                        add('|'.join(alts))             # the firmware names the first when none is there
+                elif m.group(1):
+                    letter = single_letter(args[0], fn, i, bindings) if args else None
+                    if letter:
+                        add(letter)
+                elif m.group(2) not in KEYWORDS and any(x.lstrip('&*') == gb for x in args):
+                    found = callees(fn, m.group(2), i + m.start(2))
+                    rs = []
+                    for c in found:
+                        bind = bind_params(c, args, fn, i, bindings)
+                        key = (c.qual, id(c.body), frozenset(bind.items()))
+                        if key in stack:
+                            rs.append((set(), {}))
+                            continue
+                        if key not in req_memo:
+                            r, d, _ = requirements(c, 0, len(c.body), bind, depth + 1, stack | {key})
+                            req_memo[key] = (r, d)
+                        rs.append(req_memo[key])
+                    if rs:
+                        # a virtual call: only what every implementation needs
+                        for x in set.intersection(*[r for r, _ in rs]):
+                            add(x)
+                        for k in set.intersection(*[set(d) for _, d in rs]):
+                            deps[k] |= set.intersection(*[d[k] for _, d in rs])
+        if EXIT.search(t):
+            return req, deps, True
+        i = j
+    return req, deps, False
 
 # ── The command switches ──────────────────────────────────────────────────────────
 
@@ -1091,6 +1304,9 @@ def macro_fraction(fn, sw_start, code, fraction):
 
 
 commands = {}
+open_commands = defaultdict(set)
+required = {}
+requires = {}
 
 
 def record(cmd, reads):
@@ -1098,6 +1314,28 @@ def record(cmd, reads):
     for letter, ks in reads.items():
         if not letter.startswith('__'):
             entry[letter] |= ks
+    for letter in reads.get('__seen', ()):
+        if letter not in entry and letter != '?':
+            entry[letter] = {'seen'}             # looked at, its value not read (G28 X)
+    open_commands[cmd] |= reads.get('__open', set())
+    if '?' in entry or '?' in reads.get('__seen', ()):
+        open_commands[cmd].add('a letter is chosen at run time')
+
+
+def record_requirements(cmd, fn, chain, bind):
+    req, deps = set(), defaultdict(set)
+    for a, b in chain:
+        r, d, left = requirements(fn, a, b, bind)
+        req |= r
+        for k, v in d.items():
+            deps[k] |= v
+        if left:
+            break
+    if req:
+        required[cmd] = sorted(req)
+    deps = {k: sorted(v - req) for k, v in deps.items() if v - req}
+    if deps:
+        requires[cmd] = dict(sorted(deps.items()))
 
 
 for handler, letter in (('HandleGcode', 'G'), ('HandleMcode', 'M')):
@@ -1115,9 +1353,11 @@ for handler, letter in (('HandleGcode', 'G'), ('HandleMcode', 'M')):
                         reads[k] |= v
                 return reads
             record(f'{letter}{code}', run(-1))
+            record_requirements(f'{letter}{code}', fn, chain, {'code': code, '__frac': -1})
             for fraction in sorted(run(None)['__fractions']):
                 if fraction > 0 and not macro_fraction(fn, sw[0], code, fraction):
                     record(f'{letter}{code}.{fraction}', run(fraction))
+                    record_requirements(f'{letter}{code}.{fraction}', fn, chain, {'code': code, '__frac': fraction})
         for code in sorted(fraction_codes(fn, sw[0])):
             if not any(c.startswith(f'{letter}{code}.') for c in commands) and commands.get(f'{letter}{code}'):
                 # A command that reads no parameter (G59.1 selects a coordinate system) needs no entries.
@@ -1177,10 +1417,17 @@ data = {
         'firmware': 'RepRapFirmware ' + describe_checkout(opts.rrf),
         'canlib': 'CANlib ' + describe_checkout(opts.canlib),
         'sbc': 'DuetSoftwareFramework ' + describe_checkout(opts.dsf),
-        'kinds': 'float, int, uint, bool, string, ip, mac, driver (n or board.n), any; [] is a colon-separated list; '
-                 'the letter "axes" stands for every axis letter, "?" for any letter of the command',
+        'kinds': 'float, int, uint, bool, string (quoted or {…}), text (may be unquoted), ip, mac, driver (n or board.n), '
+                 'any, seen (looked at, its value not read); [] is a colon-separated list; the letter "axes" stands for '
+                 'every axis letter, "?" for any letter of the command',
+        'open': 'commands whose letters the generator cannot all account for, and why',
+        'required': 'letters every run of the command needs (MustSee): "P|S" is either',
+        'requires': 'letters a present letter needs',
     },
     'commands': {c: {l: '|'.join(sorted(ks)) for l, ks in sorted(commands[c].items())} for c in sorted(commands, key=sort_key)},
+    'open': {c: sorted(open_commands[c]) for c in sorted(open_commands, key=sort_key) if open_commands[c]},
+    'required': {c: required[c] for c in sorted(required, key=sort_key)},
+    'requires': {c: requires[c] for c in sorted(requires, key=sort_key)},
     'sbc': sbc_commands(),
 }
 with open(opts.out, 'w') as f:
@@ -1196,6 +1443,9 @@ if opts.report:
     unknown = [f'{c} ({v["?"]})' for c, v in data['commands'].items() if '?' in v]
     print(f'reads of a letter that could not be told ({len(unknown)}):', ' '.join(unknown))
     print(f'read by DuetSoftwareFramework itself ({len(data["sbc"])}):', ' '.join(data['sbc']))
+    print(f'open ({len(data["open"])}):', ' '.join(data['open']))
+    print(f'required ({len(data["required"])}):', ' '.join(f'{c}:{",".join(v)}' for c, v in data['required'].items()))
+    print(f'requires ({len(data["requires"])}):', ' '.join(f'{c}:{k}>{",".join(v)}' for c, d in data['requires'].items() for k, v in d.items()))
     print(f'unresolved ({sum(stats["unresolved"].values())}):')
     for k, n in sorted(stats['unresolved'].items()):
         print(f'  {k} ({n})')
