@@ -11,7 +11,7 @@ import {
 describe('config: normaliseArgCheckConfig', () => {
   const def = defaultArgCheckConfig();
   it('defaults are all-on, no ignores', () => {
-    assert.deepEqual(def, { enabled: true, paths: { enabled: true, ignore: [] } });
+    assert.deepEqual(def, { enabled: true, paths: { enabled: true, ignore: [] }, parameters: { enabled: true } });
   });
   const garbage: unknown[] = [undefined, null, 0, 1, 'x', true, [], () => 1];
   for (const g of garbage) {
@@ -20,8 +20,9 @@ describe('config: normaliseArgCheckConfig', () => {
     });
   }
   it('partial config keeps other defaults', () => {
-    assert.deepEqual(normaliseArgCheckConfig({ enabled: false }), { enabled: false, paths: { enabled: true, ignore: [] } });
-    assert.deepEqual(normaliseArgCheckConfig({ paths: { enabled: false } }), { enabled: true, paths: { enabled: false, ignore: [] } });
+    assert.deepEqual(normaliseArgCheckConfig({ enabled: false }), { enabled: false, paths: { enabled: true, ignore: [] }, parameters: { enabled: true } });
+    assert.deepEqual(normaliseArgCheckConfig({ paths: { enabled: false } }), { enabled: true, paths: { enabled: false, ignore: [] }, parameters: { enabled: true } });
+    assert.deepEqual(normaliseArgCheckConfig({ parameters: { enabled: false } }).parameters, { enabled: false });
   });
   it('wrong-typed fields are ignored', () => {
     assert.deepEqual(normaliseArgCheckConfig({ enabled: 'no', paths: { enabled: 1, ignore: 'x' } }), def);

@@ -34,6 +34,7 @@ The extension activates automatically for `.g`, `.gcode`, `.gc` and `.gco` files
 
 ### Argument Validation & File Path Checking
 
+* **Parameter letters**: a letter the command does not read is a warning (`G1 X1 Q5`, `M106 F500` — RRF 3 sets fan frequency with `M950`), and a letter the command needs is an error when it is missing (`M42 P1` without `S`, `M471` without `S` and `T`), as RepRapFirmware 3.5–3.7 reads them. Commands that pass their letters to a macro (`M98 P…`, a command the firmware does not have) or take the rest of the line as text are not checked. See `rrfgcode.argCheck.parameters.enabled`.
 * **Command-aware path validation**: The LSP validates only parameters that are known RRF file or directory paths. This avoids treating ordinary strings, UI messages, SSIDs, passwords, or labels as filesystem paths.
 * **Diagnostics for missing paths**: Static file-path literals are checked against the SD-card root and reported as warnings when the referenced file, directory, or required parent directory does not exist.
 * **Correct create/save behavior**: Commands that create, save, log, or rename to a target path validate the parent directory, not the target file itself.
@@ -102,6 +103,7 @@ This extension contributes the following settings:
 
 * `rrfgcode.argCheck.enabled` (bool, default `true`): Master switch for argument validation. When false, no G/M/T command argument checks run.
 * `rrfgcode.argCheck.paths.enabled` (bool, default `true`): Enables or disables file-path existence warnings specifically.
+* `rrfgcode.argCheck.parameters.enabled` (bool, default `true`): Warns about G/M/T parameter letters the command does not read, and reports letters the command needs that are missing.
 * `rrfgcode.argCheck.paths.ignore` (array, default `[]`): Glob patterns, using forward slashes and relative to the SD-card root, that should not trigger "file not found" warnings.
 
 #### Ignore Pattern Examples

@@ -63,6 +63,11 @@
           "default": true,
           "description": "Warn when a string-literal path argument (e.g. M98 P\"sys/foo.g\") refers to a file that does not exist on the SD-card root."
         },
+        "rrfgcode.argCheck.parameters.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Warn about a G/M/T parameter letter the command does not read, and report a letter the command needs that is missing (e.g. M42 without S), as RepRapFirmware reads them."
+        },
         "rrfgcode.argCheck.paths.ignore": {
           "type": "array",
           "items": {

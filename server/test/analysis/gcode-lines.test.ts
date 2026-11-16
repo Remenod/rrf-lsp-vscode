@@ -87,7 +87,7 @@ describe('gcode: expression braces inside commands', () => {
     ['G1 X{(1}', /unclosed/],
     ['G1 X{1', /unclosed/],
   ]);
-  expectSilent(['G1 X{1+2}', 'M291 K{"a","b"} S4', 'G1 X{abs(-1)}', 'G1 X{max(1,2,3)}']);
+  expectSilent(['G1 X{1+2}', 'M291 P"x" K{"a","b"} S4', 'G1 X{abs(-1)}', 'G1 X{max(1,2,3)}']);
 });
 
 describe('gcode: comments, line numbers, checksums', () => {

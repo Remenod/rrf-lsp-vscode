@@ -82,6 +82,7 @@ export function lint(text: string, opts: LintOptions = {}): Diagnostic[] {
         enabled: opts.argCheck?.paths?.enabled ?? base.paths.enabled,
         ignore: opts.argCheck?.paths?.ignore ?? base.paths.ignore,
       },
+      parameters: { enabled: opts.argCheck?.parameters?.enabled ?? base.parameters.enabled },
     },
   };
   if (opts.typeCheck !== 'omit') o.typeCheck = { enabled: opts.typeCheck ?? false };

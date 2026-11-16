@@ -15,7 +15,7 @@ import { Ty, UNKNOWN, BOTTOM, union, lacksAll, describe, key, isUnknown, atoms, 
 import { Typer, Scope, TypeDiag, CODE, MSG, narrowFacts, applyFact, NarrowFact, R } from './infer';
 import { Version } from './versions';
 import { checkParamValue, checkLiteralValue, LiteralForm } from './params';
-import { commandKey, isBuiltIn } from '../gcodeParams';
+import { commandKey, isBuiltIn, commandSegments } from '../gcodeParams';
 import { stringLiteralText } from '../argValidators';
 
 // ── Statements ──────────────────────────────────────────────────────────────
@@ -178,26 +178,6 @@ function valueLetter(tokens: Token[], i: number): string | null {
             tt !== TokenType.HexInteger && tt !== TokenType.BinInteger && tt !== TokenType.Minus && tt !== TokenType.Plus) return null;
     }
     return null;
-}
-
-/**
- * The commands of a line as token ranges [start, end): a G or M word outside quotes and braces
- * starts the next command, a T further on is a parameter (StringParser::FindParameters).
- */
-function commandSegments(t: Token[]): Array<[number, number]> {
-    const out: Array<[number, number]> = [];
-    let depth = 0;
-    let start = 0;
-    let i = 0;
-    for (; i < t.length; i++) {
-        const tt = t[i].type;
-        if (tt === TokenType.EOF || tt === TokenType.Comment) break;
-        if (tt === TokenType.LBrace) depth++;
-        else if (tt === TokenType.RBrace && depth > 0) depth--;
-        else if (tt === TokenType.GCode && depth === 0 && i > start) { out.push([start, i]); start = i; }
-    }
-    out.push([start, i]);
-    return out;
 }
 
 /** Token types a parameter value of a macro call may start with (StringParser::AddParameters). */
