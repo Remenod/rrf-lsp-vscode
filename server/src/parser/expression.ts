@@ -958,10 +958,11 @@ export function validateLine(
       }
     }
 
-    // Undefined global → warning only (may be declared elsewhere / at runtime)
+    // Undefined global → warning only (may be declared elsewhere / at runtime), and nothing at all
+    // under an exists() guard that proves it exists
     if (val.startsWith('global.') && ctx) {
       const globalName = val.slice(7).split('[')[0];
-      if (!ctx.symbolTable.lookupGlobal(globalName)) {
+      if (!ctx.symbolTable.lookupGlobal(globalName) && !isExistsGuarded(tokens, targetTok, `global.${globalName}`, ctx, assertsExists)) {
         errors.push({
           severity: 'warning',
           message:
@@ -1298,17 +1299,39 @@ function tokensContainExistsGuard(tokens: Token[], qualified: string, before?: n
 }
 
 /**
+ * `exists(<qualified>)` is one of the `&&`-joined parts of a condition: not negated, not compared
+ * (`exists(…) == false`), and the condition has no `||` and no `?:`, so what it guards runs only
+ * while <qualified> exists.
+ */
+function assertsExists(tokens: Token[], qualified: string, before?: number): boolean {
+    const part = before === undefined ? tokens : tokens.filter(t => t.start < before);
+    if (part.some(t => t.type === TokenType.Or || t.type === TokenType.Ternary)) return false;
+    if (part.some((t, k) => t.type === TokenType.Not && part[k + 1]?.type === TokenType.LParen)) return false;
+    for (let i = 0; i + 3 < part.length; i++) {
+        const [f, open, arg, close] = part.slice(i, i + 4);
+        if (f.type !== TokenType.FunctionName || f.value.toLowerCase() !== 'exists' || open.type !== TokenType.LParen) continue;
+        if (arg.type !== TokenType.Identifier || arg.value !== qualified || close.type !== TokenType.RParen) continue;
+        const next = part[i + 4]?.type;
+        const joined = next === undefined || next === TokenType.And || next === TokenType.RParen ||
+            next === TokenType.EOF || next === TokenType.Comment;
+        if (joined && part[i - 1]?.type !== TokenType.Not) return true;
+    }
+    return false;
+}
+
+/**
  * True when the use of `qualified` at token `usage` is dominated by an
  * un-negated `exists(<qualified>)` guard: earlier on the same line, or in the
- * condition of an enclosing if/elif/while block.
+ * condition of an enclosing if/elif/while block. `check` decides what counts as a guard.
  */
 function isExistsGuarded(
     tokens: Token[],
     usage: Token,
     qualified: string,
     ctx: DiagnosticContext,
+    check: (tokens: Token[], qualified: string, before?: number) => boolean = tokensContainExistsGuard,
 ): boolean {
-    if (tokensContainExistsGuard(tokens, qualified, usage.start)) return true;
+    if (check(tokens, qualified, usage.start)) return true;
     if (!ctx.docLines) return false;
 
     let cur = ctx.indent;
@@ -1320,7 +1343,7 @@ function isExistsGuarded(
         // `l` is the header of the block enclosing the usage.
         if (/^(if|elif|while)\b/i.test(text.trim())) {
             const headerTokens = new Lexer(text, l).tokenize();
-            if (tokensContainExistsGuard(headerTokens, qualified)) return true;
+            if (check(headerTokens, qualified)) return true;
         }
         cur = ind;
     }
@@ -1473,7 +1496,8 @@ function checkDeclaredVars(
       // Exempt: direct argument to exists()
       if (isInsideExistsArg(tokens, i)) continue;
       const name = v.slice(7).split('[')[0];
-      if (!ctx.symbolTable.lookupGlobal(name)) {
+      // `if exists(global.x)` proves the global exists in what it guards (created at run time elsewhere).
+      if (!ctx.symbolTable.lookupGlobal(name) && !isExistsGuarded(tokens, t, `global.${name}`, ctx, assertsExists)) {
         errors.push({
           severity: 'warning',
           message:

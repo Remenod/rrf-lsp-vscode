@@ -123,6 +123,29 @@ describe('scope: globals', () => {
     assert.ok(has(warningsOf(ds), /'global\.nope' not found in any open file/));
   });
 
+  it('an exists() guard proves an undeclared global exists in what it guards', () => {
+    const quiet = (t: string) => assert.deepEqual(msgs(lint(t)), [], t);
+    quiet(src('if exists(global.hepafan)', '  echo global.hepafan'));
+    quiet(src('var f = "a.g"', 'var n = "fan"', 'if exists(global.hepafan)',
+      '  echo >{var.f} "set global." ^ var.n ^ " = " ^ global.hepafan'));
+    quiet(src('if exists(global.hepafan) && global.hepafan > 0', '  set global.hepafan = 0'));
+    quiet(src('while exists(global.q) && global.q < 3', '  set global.q = global.q + 1'));
+    quiet('echo exists(global.hepafan) && global.hepafan');
+    quiet(src('if exists(global.hepafan)', '  if global.hepafan > 0', '    echo global.hepafan'));
+    quiet(src('if false', '  echo 1', 'elif exists(global.hepafan)', '  echo global.hepafan'));
+  });
+
+  it('a guard that does not prove it keeps the warning', () => {
+    const warns = (t: string) => assert.ok(has(warningsOf(lint(t)), /'global\.hepafan' not found in any open file/), t);
+    warns(src('if !exists(global.hepafan)', '  echo global.hepafan'));
+    warns(src('if exists(global.hepafan) || true', '  echo global.hepafan'));
+    warns(src('if !(exists(global.hepafan) && true)', '  echo global.hepafan'));
+    warns(src('if exists(global.hepafan) == false', '  echo global.hepafan'));
+    warns(src('if exists(global.hepafan)', '  echo 1', 'else', '  echo global.hepafan'));
+    warns(src('if exists(global.hepafan)', '  echo 1', 'echo global.hepafan'));
+    warns('echo global.hepafan && exists(global.hepafan)');
+  });
+
   it('global.x[0] subscript resolves by base name', () => {
     assert.deepEqual(msgs(lint(src('global g = {1,2}', 'echo global.g[0]'))), []);
   });
