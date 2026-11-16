@@ -113,6 +113,68 @@ export function allOmPaths(target?: OmTarget): OmPathInfo[] {
     return [...names].sort().filter(p => !p.endsWith('[]')).map(p => getOmPathInfo(p, target)!);
 }
 
+/** Where a path leaves the object model: the first segment no known path has, and a known name for it. */
+export interface OmMismatch {
+    /** Index of the first unknown segment of the path split at '.' (`move.axes[].homedd` → 2). */
+    at: number;
+    /** A known name for that segment that makes the whole path known (`homed`), if one is close. */
+    name?: string;
+}
+
+/**
+ * Null when `path` is known, or when what follows its known part cannot be told (a value of unknown
+ * type, an object whose fields the data does not list, an index on a value that is not an array —
+ * the type checks report that). Otherwise the first segment that is not known.
+ */
+export function omPathMismatch(path: string, target?: OmTarget): OmMismatch | null {
+    const norm = normalisePath(path);
+    if (typeOf(norm, target) !== undefined) return null;
+    const segs = norm.split('.');
+    let k = 0;
+    while (k < segs.length && typeOf(segs.slice(0, k + 1).join('.'), target) !== undefined) k++;
+    const known = segs.slice(0, k).join('.');
+    const paths = new Set<string>();
+    for (const d of linesFor(target)) {
+        for (const p of d.paths.keys()) paths.add(p);
+        if (target?.sbc) for (const p of d.sbc.keys()) paths.add(p);
+    }
+    const prefix = k > 0 ? `${known}.` : '';
+    if (k > 0) {
+        const kinds = typeOf(known, target)!.split('|');
+        if (kinds.includes('unknown')) return null;
+        const hasChildren = [...paths].some(p => p.startsWith(prefix) || p.startsWith(`${known}[]`));
+        if (!hasChildren && kinds.includes('object')) return null;
+    }
+    const bad = segs[k].replace(/(\[\])+$/, '');
+    const suffix = segs[k].slice(bad.length);
+    const names = new Set<string>();
+    for (const p of paths) if (p.startsWith(prefix)) names.add(p.slice(prefix.length).split('.')[0].replace(/(\[\])+$/, ''));
+    // `state.status[0]`: the name is known, the index is not (indexing a value that is not an array).
+    if (names.has(bad)) return null;
+    let best: string | undefined;
+    let bestDistance = Math.max(1, Math.floor(bad.length / 3)) + 1;
+    for (const n of [...names].sort()) {
+        const d = editDistance(bad.toLowerCase(), n.toLowerCase());
+        if (d < bestDistance && typeOf([...segs.slice(0, k), n + suffix, ...segs.slice(k + 1)].join('.'), target) !== undefined) {
+            best = n;
+            bestDistance = d;
+        }
+    }
+    return best === undefined ? { at: k } : { at: k, name: best };
+}
+
+function editDistance(a: string, b: string): number {
+    let prev = Array.from({ length: b.length + 1 }, (_, j) => j);
+    for (let i = 1; i <= a.length; i++) {
+        const cur = [i];
+        for (let j = 1; j <= b.length; j++) {
+            cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+        }
+        prev = cur;
+    }
+    return prev[b.length];
+}
+
 /** Replace concrete array indices with [] for normalised key lookup. */
 function normalisePath(path: string): string {
     return path.replace(/\[\d+\]/g, '[]');

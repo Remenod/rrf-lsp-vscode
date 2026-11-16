@@ -218,19 +218,35 @@ describe('scope: bare identifiers are checked against the object model', () => {
     'echo network.name',
   ]);
 
-  it('unknown OM path is a warning suggesting var.', () => {
+  it('an unknown single word is a warning suggesting var.', () => {
     const ds = lint('echo nonsense');
     assert.ok(has(warningsOf(ds), /'nonsense' is not a known Object Model path — did you mean 'var\.nonsense'\?/));
   });
 
-  it('typo in the head of a path is a warning', () => {
-    assert.ok(has(warningsOf(lint('echo move.axess[0].homed')), /not a known Object Model path/));
-    assert.ok(has(warningsOf(lint('echo move.zzz')), /not a known Object Model path/));
+  it('a typo in a path suggests the known path, not var.', () => {
+    const w = (t: string) => msgs(warningsOf(lint(t))).join(' | ');
+    assert.match(w('echo move.axess[0].homed'), /'move\.axess\[0\]\.homed' is not a known Object Model path — did you mean 'move\.axes\[0\]\.homed'\?/);
+    assert.match(w('echo move.axess'), /did you mean 'move\.axes'\?/);
+    assert.doesNotMatch(w('echo move.axess'), /var\./);
+    assert.match(w('echo move.zzz'), /'move\.zzz' is not a known Object Model path: 'move' has no field 'zzz'/);
   });
 
-  // The segment after an index (`[0].homedd`) is lexed as Dot + Identifier and skipped.
-  it('typo AFTER an array index is a warning', { todo: 'fields following [n] are not validated' }, () => {
-    assert.ok(has(warningsOf(lint('echo move.axes[0].homedd')), /not a known Object Model path/));
+  it('a field after an index is checked', () => {
+    const w = (t: string) => msgs(warningsOf(lint(t))).join(' | ');
+    assert.match(w('echo move.axes[0].homedd'), /did you mean 'move\.axes\[0\]\.homed'\?/);
+    assert.match(w('echo move.axes[0].noSuchField'), /'move\.axes\[0\]' has no field 'noSuchField'/);
+    assert.match(w('echo tools[state.currentTool].nme'), /did you mean 'tools\[state\.currentTool\]\.name'\?/);
+    assert.match(w('echo move.axes[0].microstepping.valu'), /did you mean 'move\.axes\[0\]\.microstepping\.value'\?/);
+    assert.match(w('echo move.axes.homed'), /'move\.axes' has no field 'homed'/);
+    // the range is the field
+    const [d] = warningsOf(lint('echo move.axes[0].homedd'));
+    assert.deepEqual([d.range.start.character, d.range.end.character], [18, 24]);
+  });
+
+  it('what follows a value of unknown type or an object without listed fields is not checked', () => {
+    for (const t of ['echo move.axes[0].homed', 'echo move.axes[0].microstepping.value', 'echo heat.heaters[0].sensor + 1',
+      'echo tools[state.currentTool].name', 'echo boards[0].inductiveSensor.foo', 'echo state.status[0]'])
+      assert.deepEqual(msgs(lint(t)).filter(m => /Object Model/.test(m)), [], t);
   });
 
   it('array indices of any value normalise to []', () => {

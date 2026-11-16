@@ -6,7 +6,7 @@ import { Diagnostic, DiagnosticSeverity, Range } from 'vscode-languageserver/nod
 import { Lexer } from '../parser/lexer';
 import { validateLine, DiagnosticContext } from '../parser/expression';
 import { SymbolTable } from './symbolTable';
-import { isValidOmPath, isOmIndexAvailable } from './objectModelIndex';
+import { isValidOmPath, isOmIndexAvailable, omPathMismatch } from './objectModelIndex';
 import { validateGCodeArgs, validateFunctionPathArgs, getSdRootForUri } from './argValidators';
 import { ArgCheckConfig } from './argCheckConfig';
 import { LINE_TOO_LONG_CODE } from './codeActions';
@@ -82,6 +82,7 @@ export function computeDiagnostics(uri: string, text: string, opts: DiagnosticsO
 
   const omTarget = { version: opts.rrfVersion, sbc: opts.sbc };
   const omChecker = isOmIndexAvailable() ? (p: string) => isValidOmPath(p, omTarget) : undefined;
+  const omMismatch = isOmIndexAvailable() ? (p: string) => omPathMismatch(p, omTarget) : undefined;
 
   // Resolve the SD root once per document.  validateGCodeArgs reuses this
   // for every G/M/T line so we don't repeatedly walk the filesystem.
@@ -139,6 +140,7 @@ export function computeDiagnostics(uri: string, text: string, opts: DiagnosticsO
     const ctx: DiagnosticContext = {
       symbolTable, uri, line: i, indent,
       isValidOmPath: omChecker,
+      omPathMismatch: omMismatch,
       docLines: lines,
     };
 

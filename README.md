@@ -22,7 +22,7 @@ The extension activates automatically for `.g`, `.gcode`, `.gc` and `.gco` files
 * **Go to Definition (F12)**: Quickly navigate to where variables, macros, object references, or file paths are defined.
 * **Variable Renaming**: Safely rename variables across your G-code files, scoped correctly to the block they were declared in.
 * **Find All References (Shift+F12)**: Locate all occurrences of a variable across the workspace.
-* **Duet3D Object Model Support**: Object-model paths are checked, completed and typed (`int`, `float`, `bool`, `string`, …) from RepRapFirmware's own object-model tables, for the line set in `rrfgcode.rrfVersion` (or any of 3.5, 3.6, 3.7 when it is empty). Fields that only exist with a single-board computer are known when `rrfgcode.sbc` is on.
+* **Duet3D Object Model Support**: Object-model paths are checked, completed and typed (`int`, `float`, `bool`, `string`, …) from RepRapFirmware's own object-model tables, for the line set in `rrfgcode.rrfVersion` (or any of 3.5, 3.6, 3.7 when it is empty). Fields that only exist with a single-board computer are known when `rrfgcode.sbc` is on. A field after an index is checked too, and a typo gets the nearest known path (`move.axes[0].homedd` — did you mean `move.axes[0].homed`?).
 * **Operators Syntax Check**: Correctly recognizes invalid operator usage patterns.
 * **Scope Check**: Shows diagnostics based on valid variable definition scope — a variable used after its enclosing block has ended is flagged, just as the firmware would reject it at runtime.
 * **Block Structure Check**: Flags orphan `else`/`elif`, `break`/`continue` outside a loop, and `iterations` used outside a loop.

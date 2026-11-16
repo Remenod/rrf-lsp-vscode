@@ -42,6 +42,8 @@ export interface DiagnosticContext {
   /** Full document split into lines — required for accurate scope analysis. */
   docLines?: string[];
   isValidOmPath?: (path: string) => boolean;
+  /** Where an object-model path (indexes as []) leaves the model, or null (objectModelIndex.omPathMismatch). */
+  omPathMismatch?: (path: string) => { at: number; name?: string } | null;
 }
 
 // ── Binary operators (priority table) ────────────────────────────────────────
@@ -1229,7 +1231,10 @@ function checkConditionalChain(first: Token, ctx: DiagnosticContext, errors: Par
 // "homed" follows a Dot → skip it.
 function checkBareIdentifiers(tokens: Token[], ctx: DiagnosticContext): ParseError[] {
   const errors: ParseError[] = [];
-  if (!ctx.isValidOmPath) return errors;
+  const isValid = ctx.isValidOmPath;
+  if (!isValid) return errors;
+  const mismatch: (p: string) => { at: number; name?: string } | null =
+    ctx.omPathMismatch ?? (p => (isValid(p) ? null : { at: 0 }));
 
   for (let i = 0; i < tokens.length; i++) {
     const t = tokens[i];
@@ -1237,14 +1242,39 @@ function checkBareIdentifiers(tokens: Token[], ctx: DiagnosticContext): ParseErr
     const v = t.value;
     if (v.startsWith('var.') || v.startsWith('global.') || v.startsWith('param.')) continue;
     if (i > 0 && tokens[i - 1]?.type === TokenType.Dot) continue;
-    const normalised = v.replace(/\[\d+\]/g, '[]');
-    if (!ctx.isValidOmPath(normalised)) {
-      errors.push({
-        severity: 'warning',
-        message: `'${v}' is not a known Object Model path — did you mean 'var.${v}'?`,
-        ...span(t),
-      });
+    // The whole path: `move.axes[0].homed` lexes as the identifier, an index, '.' and a field.
+    const segs: Array<{ name: string; indexes: string[]; tok: Token }> = v.split('.').map(name => ({ name, indexes: [], tok: t }));
+    for (let j = i + 1; ;) {
+      if (tokens[j]?.type === TokenType.LBracket) {
+        const from = j;
+        let depth = 0;
+        for (; j < tokens.length; j++) {
+          if (tokens[j].type === TokenType.LBracket) depth++;
+          else if (tokens[j].type === TokenType.RBracket && --depth === 0) break;
+        }
+        segs[segs.length - 1].indexes.push(tokens.slice(from + 1, j).map(x => x.value).join(''));
+        j++;
+      } else if (tokens[j - 1]?.type === TokenType.RBracket && tokens[j]?.type === TokenType.Dot &&
+        tokens[j + 1]?.type === TokenType.Identifier) {
+        const field = tokens[j + 1];
+        segs.push(...field.value.split('.').map(name => ({ name, indexes: [] as string[], tok: field })));
+        j += 2;
+      } else break;
     }
+    const m = mismatch(segs.map(s => s.name + '[]'.repeat(s.indexes.length)).join('.'));
+    if (!m) continue;
+    const text = (names: string[], upTo = segs.length) =>
+      segs.slice(0, upTo).map((s, k) => names[k] + s.indexes.map(x => `[${x}]`).join('')).join('.');
+    const names = segs.map(s => s.name);
+    let message = `'${text(names)}' is not a known Object Model path`;
+    if (m.name !== undefined) {
+      message += ` — did you mean '${text(names.map((n, k) => (k === m.at ? m.name! : n)))}'?`;
+    } else if (segs.length === 1 && segs[0].indexes.length === 0) {
+      message += ` — did you mean 'var.${v}'?`;
+    } else if (m.at > 0 && m.at < segs.length) {
+      message += `: '${text(names, m.at)}' has no field '${segs[m.at].name}'`;
+    }
+    errors.push({ severity: 'warning', message, ...span(segs[Math.min(m.at, segs.length - 1)].tok) });
   }
   return errors;
 }
