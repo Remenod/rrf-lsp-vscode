@@ -48,14 +48,19 @@ export function blockDiagnostics(lines: string[]): ParseError[] {
     }
   }
 
-  // A block keyword whose next non-blank line (a comment counts) is not indented deeper.
+  // A block keyword whose next non-blank line is not indented deeper. The firmware skips comment
+  // lines (StringParser::CheckMetaCommand), so a comment no deeper than the keyword is passed over;
+  // a deeper one counts as the body (an intended no-op).
   for (let k = 0; k < all.length; k++) {
     const l = all[k];
     if (!l || l.comment) continue;
     const kw = BLOCK.exec(l.rest)?.[1];
     if (!kw) continue;
     let next: Line | null = null;
-    for (let j = k + 1; j < all.length && !next; j++) next = all[j];
+    for (let j = k + 1; j < all.length && !next; j++) {
+      const c = all[j];
+      if (c && !(c.comment && c.depth <= l.depth)) next = c;
+    }
     if (next && next.depth > l.depth) continue;
     out.push({
       line: l.index, start: l.lead.length, end: l.lead.length + kw.length, severity: 'warning',
