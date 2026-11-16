@@ -6,7 +6,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { DiagnosticSeverity } from 'vscode-languageserver/node';
 import { lint, LintOptions } from '../helpers/harness';
-import { PARAM_UNKNOWN_CODE, PARAM_MISSING_CODE } from '../../src/analysis/paramChecks';
+import { PARAM_UNKNOWN_CODE, PARAM_MISSING_CODE, PARAM_VALUE_CODE } from '../../src/analysis/paramChecks';
 
 const params = (text: string, opts: LintOptions = {}) =>
   lint(text, opts).filter(d => d.code === PARAM_UNKNOWN_CODE || d.code === PARAM_MISSING_CODE);
@@ -74,6 +74,46 @@ describe('letters the command needs', () => {
   it('each command of a line is checked on its own letters', () => {
     assert.deepEqual(show('G4 S1 M42 P1'), ['missing M42']);
     assert.deepEqual(show('M42 P1 S1 G4 Q1'), ['unknown Q1']);
+  });
+});
+
+// StringParser reads a value that does not start with '{' with RRFLibraries NumericConverter:
+// StrToI32 (a sign), StrToU32 (no '-'), SafeStrtof (a sign, '.', an exponent); none reads 0x or 0b.
+describe('numbers written without {…}', () => {
+  const values = (text: string, opts: LintOptions = {}) => lint(text, opts).filter(d => d.code === PARAM_VALUE_CODE);
+  const one = (text: string) => {
+    const ds = values(text);
+    assert.equal(ds.length, 1, `${text}: ${JSON.stringify(ds.map(d => d.message))}`);
+    return ds[0];
+  };
+  it('a number the reader cannot start is an error', () => {
+    const d = one('M106 P-1 S1');
+    assert.equal(d.severity, DiagnosticSeverity.Error);
+    assert.deepEqual([d.range.start.character, d.range.end.character], [6, 8]);
+    assert.equal(d.message, `parameter P of M106 cannot be negative, got -1: the firmware stops with "expected number after 'P'"`);
+    assert.match(one('M584 X0.1 Y-1').message, /parameter Y of M584 cannot be negative/);
+    assert.match(one('G4 P.5').message, /parameter P of G4 is a whole number, got \.5: the firmware stops with "expected number after 'P'"/);
+    // a list reader reads on after ':'
+    assert.match(one('M563 P0 D0:').message, /got '0:': the firmware stops with "expected number after ':'"/);
+  });
+  it('a number the reader takes only in part is a warning', () => {
+    const d = one('G4 P1.5');
+    assert.equal(d.severity, DiagnosticSeverity.Warning);
+    assert.equal(d.message, 'parameter P of G4 is a whole number: the firmware reads P1.5 as P1 and ignores .5');
+    assert.match(one('M563 P0 D0:1.5').message, /reads D0:1\.5 as D0:1 and ignores \.5/);
+    assert.match(one('M260 A0x7F B1').message, /reads A0x7F as A0 — only an expression reads hex or binary, write A\{0x7F\}/);
+    assert.match(one('G1 X0b11').message, /reads X0b11 as X0/);
+    assert.match(one('G1 X1.5.3').message, /reads X1\.5\.3 as X1\.5 and ignores \.3/);
+    // M906 reads one current for an axis and a list only for E
+    assert.match(one('M906 Y1800:1800').message, /reads Y1800:1800 as Y1800 and ignores :1800/);
+  });
+  it('what some reader takes whole is fine', () => {
+    for (const t of ['G4 S1.5', 'G4 P+2', 'G1 X1e3 Y-.5', 'M106 P0 H-1', 'M563 P0 D0:-1', 'M569 P0.1 S-1', 'M584 X0.1:0.2',
+      'M906 E600:600', 'M260 A{0x7F}', 'G1 E-{1}', 'M98 P"x.g" A1.5', 'M1234 A0x7F', 'M92 E400:{2*200}', 'M92 E400:"x"'])
+      assert.deepEqual(values(t).map(d => d.message), [], t);
+  });
+  it('with a single-board computer DuetSoftwareFramework parses the numbers: not checked', () => {
+    assert.deepEqual(values('G4 P1.5', { sbc: true }), []);
   });
 });
 

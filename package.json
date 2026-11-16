@@ -66,7 +66,7 @@
         "rrfgcode.argCheck.parameters.enabled": {
           "type": "boolean",
           "default": true,
-          "description": "Warn about a G/M/T parameter letter the command does not read, and report a letter the command needs that is missing (e.g. M42 without S), as RepRapFirmware reads them."
+          "description": "Warn about a G/M/T parameter letter the command does not read, report a letter the command needs that is missing (e.g. M42 without S), and check numbers written without braces (e.g. M106 P-1, G4 P1.5), as RepRapFirmware reads them."
         },
         "rrfgcode.argCheck.paths.ignore": {
           "type": "array",

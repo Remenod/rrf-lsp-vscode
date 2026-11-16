@@ -11,7 +11,7 @@ import { createMessageConnection, MessageConnection, StreamMessageReader, Stream
 import { Diagnostic } from 'vscode-languageserver/node';
 import { makeSd, SdTree, SERVER_ROOT } from '../helpers/harness';
 
-const TEXT = ['echo round(10.5)', 'M569 S1', 'M558 K0 P8 U1', 'G1 X1 Q5'].join('\n');
+const TEXT = ['echo round(10.5)', 'M569 S1', 'M558 K0 P8 U1', 'G1 X1 Q5', 'G4 P1.5'].join('\n');
 
 /** VS Code's answers: the window has no target; the folder's own settings say `folder`. */
 interface Answers { window: Record<string, unknown>; folder: Record<string, unknown> }
@@ -72,7 +72,7 @@ describe('settings reach the server per workspace folder', () => {
 
   it("the folder's target line decides: round() and the letters follow RRF 3.5", async () => {
     const d = await wait(fileUri('macros/check'), x => x.some(y => y.code === 'rrf-version'));
-    assert.deepEqual(codes(d), ['1:rrf-version', '2:rrf-param-missing', '3:rrf-param-unknown', '4:rrf-param-unknown']);
+    assert.deepEqual(codes(d), ['1:rrf-version', '2:rrf-param-missing', '3:rrf-param-unknown', '4:rrf-param-unknown', '5:rrf-param-value']);
     assert.match(d.find(x => x.code === 'rrf-version')!.message, /'round' is not available on RepRapFirmware 3\.5/);
   });
 
@@ -80,7 +80,7 @@ describe('settings reach the server per workspace folder', () => {
     answers.folder = { rrfVersion: '3.7' };
     conn.sendNotification('workspace/didChangeConfiguration', { settings: null });
     const d = await wait(fileUri('macros/check'), x => !x.some(y => y.code === 'rrf-version'));
-    assert.deepEqual(codes(d), ['4:rrf-param-unknown']);
+    assert.deepEqual(codes(d), ['4:rrf-param-unknown', '5:rrf-param-value']);
   });
 
   it('the parameter checks follow their own setting', async () => {
@@ -88,5 +88,12 @@ describe('settings reach the server per workspace folder', () => {
     conn.sendNotification('workspace/didChangeConfiguration', { settings: null });
     const d = await wait(fileUri('macros/check'), x => x.some(y => y.code === 'rrf-version'));
     assert.deepEqual(codes(d), ['1:rrf-version']);
+  });
+
+  it('with a single-board computer, numbers written without {…} are not checked', async () => {
+    answers.folder = { rrfVersion: '3.7', sbc: true };
+    conn.sendNotification('workspace/didChangeConfiguration', { settings: null });
+    const d = await wait(fileUri('macros/check'), x => !x.some(y => y.code === 'rrf-version') && x.some(y => y.code === 'rrf-param-unknown'));
+    assert.deepEqual(codes(d), ['4:rrf-param-unknown']);
   });
 });
