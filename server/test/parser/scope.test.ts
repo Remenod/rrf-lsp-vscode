@@ -123,27 +123,68 @@ describe('scope: globals', () => {
     assert.ok(has(warningsOf(ds), /'global\.nope' not found in any open file/));
   });
 
-  it('an exists() guard proves an undeclared global exists in what it guards', () => {
-    const quiet = (t: string) => assert.deepEqual(msgs(lint(t)), [], t);
-    quiet(src('if exists(global.hepafan)', '  echo global.hepafan'));
-    quiet(src('var f = "a.g"', 'var n = "fan"', 'if exists(global.hepafan)',
-      '  echo >{var.f} "set global." ^ var.n ^ " = " ^ global.hepafan'));
-    quiet(src('if exists(global.hepafan) && global.hepafan > 0', '  set global.hepafan = 0'));
-    quiet(src('while exists(global.q) && global.q < 3', '  set global.q = global.q + 1'));
-    quiet('echo exists(global.hepafan) && global.hepafan');
-    quiet(src('if exists(global.hepafan)', '  if global.hepafan > 0', '    echo global.hepafan'));
-    quiet(src('if false', '  echo 1', 'elif exists(global.hepafan)', '  echo global.hepafan'));
+  // A global another macro creates at run time is read under exists(): the firmware evaluates the
+  // right side of && and || and a branch of ?: only when the left side or condition selects it.
+  const quiet = (...lines: string[]) => assert.deepEqual(msgs(lint(src(...lines))), [], lines.join(' / '));
+  const warns = (...lines: string[]) =>
+    assert.ok(has(warningsOf(lint(src(...lines))), /'global\.hepafan' not found in any open file/), lines.join(' / '));
+
+  it('an if, elif or while whose condition proves it exists covers its body', () => {
+    quiet('if exists(global.hepafan)', '  echo global.hepafan');
+    quiet('var f = "a.g"', 'var n = "fan"', 'if exists(global.hepafan)',
+      '  echo >{var.f} "set global." ^ var.n ^ " = " ^ global.hepafan');
+    quiet('if exists(global.hepafan) && global.hepafan > 0', '  set global.hepafan = 0');
+    quiet('while exists(global.hepafan) && global.hepafan < 3', '  set global.hepafan = global.hepafan + 1');
+    quiet('if exists(global.hepafan)', '  if global.hepafan > 0', '    echo global.hepafan');
+    quiet('if false', '  echo 1', 'elif exists(global.hepafan)', '  echo global.hepafan');
+    quiet('if exists(global.hepafan[0])', '  echo global.hepafan[0]');
+    quiet('if (exists(global.hepafan) && true) && !false', '  echo global.hepafan');
   });
 
-  it('a guard that does not prove it keeps the warning', () => {
-    const warns = (t: string) => assert.ok(has(warningsOf(lint(t)), /'global\.hepafan' not found in any open file/), t);
-    warns(src('if !exists(global.hepafan)', '  echo global.hepafan'));
-    warns(src('if exists(global.hepafan) || true', '  echo global.hepafan'));
-    warns(src('if !(exists(global.hepafan) && true)', '  echo global.hepafan'));
-    warns(src('if exists(global.hepafan) == false', '  echo global.hepafan'));
-    warns(src('if exists(global.hepafan)', '  echo 1', 'else', '  echo global.hepafan'));
-    warns(src('if exists(global.hepafan)', '  echo 1', 'echo global.hepafan'));
+  it('&&, || and ?: on the line itself', () => {
+    quiet('echo exists(global.hepafan) && global.hepafan');
+    quiet('echo !exists(global.hepafan) || global.hepafan');
+    quiet('echo exists(global.hepafan) ? global.hepafan : 0');
+    quiet('echo !exists(global.hepafan) ? 0 : global.hepafan');
+    quiet('M106 P0 S{exists(global.hepafan) ? global.hepafan : 0}');
+    quiet('var x = exists(global.hepafan) && global.hepafan > 0');
+    quiet('if !exists(global.hepafan) || global.hepafan == 0', '  M99');
+  });
+
+  it('the else of if !exists(…), and code after one that leaves the macro', () => {
+    quiet('if !exists(global.hepafan)', '  echo "none"', 'else', '  echo global.hepafan');
+    quiet('if !exists(global.hepafan)', '  echo "none"', 'elif global.hepafan > 0', '  echo global.hepafan');
+    quiet('if !exists(global.hepafan)', '  echo "none"', '  M99', 'echo global.hepafan');
+    quiet('if !exists(global.hepafan)', '  abort "no HEPA fan"', 'echo global.hepafan');
+    quiet('if !exists(global.hepafan) || global.hepafan == 0', '  M99 ; nothing to do', 'echo global.hepafan');
+    quiet('if !exists(global.hepafan)', '  M99', 'while true', '  echo global.hepafan', '  break');
+    quiet('while !exists(global.hepafan)', '  G4 S1', 'echo global.hepafan');
+  });
+
+  it('a test that does not prove it keeps the warning', () => {
+    warns('if !exists(global.hepafan)', '  echo global.hepafan');
+    warns('if exists(global.hepafan) || true', '  echo global.hepafan');
+    warns('if !(exists(global.hepafan) && true)', '  echo global.hepafan');
+    warns('if exists(global.hepafan) == false', '  echo global.hepafan');
+    // && and || share one priority: this is (true || exists(…)) && …
+    warns('if true || exists(global.hepafan) && global.hepafan > 0', '  echo 1');
+    warns('if exists(global.hepafan)', '  echo 1', 'else', '  echo global.hepafan');
+    warns('if exists(global.hepafan)', '  echo 1', 'echo global.hepafan');
     warns('echo global.hepafan && exists(global.hepafan)');
+    warns('echo exists(global.hepafan) || global.hepafan');
+    warns('echo exists(global.hepafan) ? 0 : global.hepafan');
+    // each echo item, and each {…} of a command, is evaluated on its own
+    warns('echo exists(global.hepafan), global.hepafan');
+    warns('G1 X{exists(global.hepafan) ? 1 : 0} Y{global.hepafan}');
+  });
+
+  it('an earlier if !exists(…) covers what follows only when its body always leaves', () => {
+    warns('if !exists(global.hepafan)', '  echo "none"', 'echo global.hepafan');
+    warns('if !exists(global.hepafan)', '  if true', '    M99', 'echo global.hepafan');
+    warns('if !exists(global.hepafan) && true', '  M99', 'echo global.hepafan');
+    warns('if !exists(global.hepafan)', '  M990', 'echo global.hepafan');
+    warns('while !exists(global.hepafan)', '  break', 'echo global.hepafan');
+    warns('if true', '  echo 1', 'elif !exists(global.hepafan)', '  M99', 'echo global.hepafan');
   });
 
   it('global.x[0] subscript resolves by base name', () => {
