@@ -1,6 +1,8 @@
 // analysis/existsGuard.ts
-// Whether a use of a global the workspace never declares runs only while the global exists:
-// a global another macro creates at run time is read under `exists()`.
+// Whether a use runs only while what it reads exists: a global the workspace never declares (another
+// macro creates it at run time), or an object-model field this firmware may not have, read under
+// `exists()`. exists() of an unknown object-model field is false, not an error (ObjectModel::
+// GetObjectValue with WantExists).
 //
 // The firmware evaluates the right side of `&&` only when the left is true, the right side of
 // `||` only when the left is false, and only the chosen branch of `?:` (ExpressionParser::
@@ -26,23 +28,42 @@ export interface UseSite { docLines?: string[]; line: number; indent: number }
  * `tokens` are the tokens the use was found in, for when the document lines are not known.
  */
 export function existsProven(tokens: Token[], usage: Token, qualified: string, site: UseSite): boolean {
+    return proven(tokens, usage, arg => rootName(arg) === qualified, site);
+}
+
+/**
+ * The same for an object-model path (`state.vmFeatureLevel`, indexes as `[]`): `exists()` of it, or of
+ * a path under it (`exists(move.axes[0].foo.bar)` proves `move.axes[].foo`), proves it. Indexes are
+ * not compared: the fields of every element of an array are the same.
+ */
+export function omExistsProven(tokens: Token[], usage: Token, path: string, site: UseSite): boolean {
+    return proven(tokens, usage, arg => {
+        const p = pathOf(arg);
+        return p !== null && (p === path || p.startsWith(`${path}.`) || p.startsWith(`${path}[`));
+    }, site);
+}
+
+/** Whether an `exists()` argument proves what is used. */
+type Matcher = (arg: Node) => boolean;
+
+function proven(tokens: Token[], usage: Token, matches: Matcher, site: UseSite): boolean {
     const lineText = site.docLines?.[site.line];
     const roots = lineText !== undefined ? lineRoots(new Lexer(lineText, site.line).tokenize()) : [];
     if (lineText === undefined) {
         const n = parseExpression(cutComment(tokens));
         if (n) roots.push(n);
     }
-    for (const r of roots) if (within(r, usage.start) && guards(r, usage.start, qualified)) return true;
+    for (const r of roots) if (within(r, usage.start) && guards(r, usage.start, matches)) return true;
     if (!site.docLines) return false;
-    return provenByBlocks(site.docLines, site.line, site.indent, qualified);
+    return provenByBlocks(site.docLines, site.line, site.indent, matches);
 }
 
 // ── Conditions ───────────────────────────────────────────────────────────────
 
 /** `n` being true means `x` exists. */
-function whenTrue(n: Node, x: string): boolean {
+function whenTrue(n: Node, x: Matcher): boolean {
     n = unwrap(n);
-    if (n.k === 'call' && n.name === 'exists') return n.args.length === 1 && rootName(n.args[0]) === x;
+    if (n.k === 'call' && n.name === 'exists') return n.args.length === 1 && x(n.args[0]);
     if (n.k === 'unary' && n.op === '!') return whenFalse(n.arg, x);
     if (n.k === 'binary' && n.op === '&&') return whenTrue(n.l, x) || whenTrue(n.r, x);
     if (n.k === 'binary' && n.op === '||') return whenTrue(n.l, x) && whenTrue(n.r, x);
@@ -50,12 +71,20 @@ function whenTrue(n: Node, x: string): boolean {
 }
 
 /** `n` being false means `x` exists. */
-function whenFalse(n: Node, x: string): boolean {
+function whenFalse(n: Node, x: Matcher): boolean {
     n = unwrap(n);
     if (n.k === 'unary' && n.op === '!') return whenTrue(n.arg, x);
     if (n.k === 'binary' && n.op === '&&') return whenFalse(n.l, x) && whenFalse(n.r, x);
     if (n.k === 'binary' && n.op === '||') return whenFalse(n.l, x) || whenFalse(n.r, x);
     return false;
+}
+
+/** `move.axes[].homed` for `move.axes[0].homed`. */
+function pathOf(n: Node): string | null {
+    if (n.k === 'ident') return n.name;
+    if (n.k === 'index') { const b = pathOf(n.base); return b === null ? null : `${b}[]`; }
+    if (n.k === 'field') { const b = pathOf(n.base); return b === null ? null : `${b}.${n.name}`; }
+    return null;
 }
 
 /** `global.a` for `global.a`, `global.a[0]` and `global.a[0].b`. */
@@ -67,7 +96,7 @@ function rootName(n: Node): string | null {
 const within = (n: Node, at: number) => n.s.start <= at && at < n.s.end;
 
 /** The use at offset `at` inside `n` is evaluated only when `x` exists. */
-function guards(n: Node, at: number, x: string): boolean {
+function guards(n: Node, at: number, x: Matcher): boolean {
     if (n.k === 'binary' && (n.op === '&&' || n.op === '||') && within(n.r, at)) {
         return (n.op === '&&' ? whenTrue(n.l, x) : whenFalse(n.l, x)) || guards(n.r, at, x);
     }
@@ -199,7 +228,7 @@ function bodyBreaks(docLines: string[], l: number, ind: number): boolean {
 }
 
 /** Line `l` is an `elif` or `else`: it runs only when the conditions above it in its chain are false. */
-function earlierBranchesProve(docLines: string[], l: number, ind: number, x: string): boolean {
+function earlierBranchesProve(docLines: string[], l: number, ind: number, x: Matcher): boolean {
     for (let k = l - 1; k >= 0; k--) {
         if (isBlank(docLines[k])) continue;
         const i = lineIndent(docLines[k]);
@@ -214,7 +243,7 @@ function earlierBranchesProve(docLines: string[], l: number, ind: number, x: str
     return false;
 }
 
-function provenByBlocks(docLines: string[], line: number, indent: number, x: string): boolean {
+function provenByBlocks(docLines: string[], line: number, indent: number, x: Matcher): boolean {
     if (keyword(docLines[line] ?? '') === 'elif' && earlierBranchesProve(docLines, line, indent, x)) return true;
     let cur = indent;
     for (let l = line - 1; l >= 0; l--) {

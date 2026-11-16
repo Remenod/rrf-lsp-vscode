@@ -249,6 +249,32 @@ describe('scope: bare identifiers are checked against the object model', () => {
       assert.deepEqual(msgs(lint(t)).filter(m => /Object Model/.test(m)), [], t);
   });
 
+  // exists() of an unknown field is false, not an error (ObjectModel::GetObjectValue with WantExists):
+  // a macro tests whether this firmware has a field before it reads it.
+  const omWarnings = (...lines: string[]) => msgs(warningsOf(lint(src(...lines)))).filter(m => /Object Model/.test(m));
+  it('a field that exists() tests is not reported, and neither is what the test guards', () => {
+    for (const lines of [
+      ['var fwOk = exists(state.newField) && state.newField >= 1'],
+      ['var f = true', 'if var.f && !(exists(state.newField) && state.newField >= 1)', '  echo 1'],
+      ['if exists(state.newField)', '  echo state.newField'],
+      ['if !exists(state.newField)', '  M99', 'echo state.newField'],
+      ['echo exists(move.axes[0].newField) ? move.axes[0].newField : 0'],
+      // a deeper path proves the one above it; indexes are not compared
+      ['if exists(move.axes[0].newField.sub)', '  echo move.axes[1].newField'],
+    ]) assert.deepEqual(omWarnings(...lines), [], lines.join(' / '));
+  });
+  it('outside the test, or for another field, the warning stays', () => {
+    assert.equal(omWarnings('echo state.newField').length, 1);
+    assert.equal(omWarnings('echo exists(state.newField), state.newField').length, 1);
+    assert.equal(omWarnings('if exists(state.newField)', '  echo state.otherField').length, 1);
+    assert.equal(omWarnings('if exists(state.newField)', '  echo 1', 'else', '  echo state.newField').length, 1);
+  });
+  it('a typo or an unknown root inside exists() is still a warning: the test is always false', () => {
+    assert.match(omWarnings('echo exists(move.axess)').join(), /'move\.axess' is not a known Object Model path, so exists\(\) of it is always false — did you mean 'move\.axes'\?/);
+    assert.match(omWarnings('echo exists(move.axes[0].homedd)').join(), /did you mean 'move\.axes\[0\]\.homed'\?/);
+    assert.match(omWarnings('echo exists(nonsense)').join(), /did you mean 'var\.nonsense'\?/);
+  });
+
   it('array indices of any value normalise to []', () => {
     assert.deepEqual(msgs(lint('echo move.axes[7].homed')), []);
     assert.deepEqual(msgs(lint('echo move.axes[12].homed')), []);

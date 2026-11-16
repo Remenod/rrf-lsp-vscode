@@ -3,7 +3,7 @@
 import { Token, TokenType } from './types';
 import { Lexer } from './lexer';
 import { lineIndent } from '../analysis/utils';
-import { existsProven } from '../analysis/existsGuard';
+import { existsProven, omExistsProven } from '../analysis/existsGuard';
 import { commandKey, commandSegments, paramLines, segmentWords } from '../analysis/gcodeParams';
 
 export interface ParseError {
@@ -1261,12 +1261,18 @@ function checkBareIdentifiers(tokens: Token[], ctx: DiagnosticContext): ParseErr
         j += 2;
       } else break;
     }
-    const m = mismatch(segs.map(s => s.name + '[]'.repeat(s.indexes.length)).join('.'));
+    const norm = (upTo: number) => segs.slice(0, upTo).map(s => s.name + '[]'.repeat(s.indexes.length)).join('.');
+    const m = mismatch(norm(segs.length));
     if (!m) continue;
+    // exists() of an unknown field is false, not an error: `exists(state.newField)` tests whether this
+    // firmware has it, and what that test guards reads it only when it does (existsGuard.ts). A name
+    // close to a known one is a typo, and an unknown root is not a field test.
+    const inExists = isInsideExistsArg(tokens, i);
+    if (inExists ? m.at > 0 && m.name === undefined : omExistsProven(tokens, t, norm(m.at + 1), ctx)) continue;
     const text = (names: string[], upTo = segs.length) =>
       segs.slice(0, upTo).map((s, k) => names[k] + s.indexes.map(x => `[${x}]`).join('')).join('.');
     const names = segs.map(s => s.name);
-    let message = `'${text(names)}' is not a known Object Model path`;
+    let message = `'${text(names)}' is not a known Object Model path${inExists ? ', so exists() of it is always false' : ''}`;
     if (m.name !== undefined) {
       message += ` — did you mean '${text(names.map((n, k) => (k === m.at ? m.name! : n)))}'?`;
     } else if (segs.length === 1 && segs[0].indexes.length === 0) {
