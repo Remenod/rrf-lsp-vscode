@@ -91,16 +91,5 @@ describe('TC-GC: G-code command lines', () => {
     expectTypes('M104 S{abs("x")} T0', [{ code: CODE.argument, at: '"x"' }]);
     expectTypes('T{"a" + 1}', [{ code: CODE.operand, at: '"a" + 1' }]);
   });
-  guard('TC-GC-02', 'parameter values are not checked against the parameter type', () => {
-    // String-valued parameters (GetQuotedString / AppendAsString) accept every type.
-    for (const t of ['M98 P{1}', 'M291 P{3.5} S1', 'M291 R{true} P"x" S1', 'M117 {vector(2, 0)}', 'M98 P{"a" ^ 1}',
-      'M98 P"x.g" A{move.axes[0]}', 'M98 P"x.g" B{null}', 'echo >{1} "x"'])
-      expectNoTypes(t);
-    // Numeric parameters are not checked either (see the todo below).
-    for (const t of ['G1 X{"10"}', 'G1 X{true}', 'M291 S{2.0} P"x"', 'M568 P0 S{null}']) expectNoTypes(t);
-  });
-  it('numeric parameters given a string or Boolean', { todo: 'G-code parameter values are not type-checked' }, () => {
-    expectTypes('G1 X{"10"}', [{ code: CODE.argument, at: '"10"', firmware: MSG.numericOperand }]);
-    expectTypes('G1 X{true}', [{ code: CODE.argument, at: 'true' }]);
-  });
+  // Parameter values against the parameter's type: 11-parameters.test.ts.
 });

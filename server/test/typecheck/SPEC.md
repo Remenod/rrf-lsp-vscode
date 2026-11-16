@@ -16,6 +16,7 @@ disagree, the source wins.
 | Date strings | `src/libc/strptime.cpp` (`SafeStrptime`) |
 | Functions per line | `NamedEnum(Function, …)` in tags `3.5.4`, `3.6.4`, `3.7.0` |
 | Object model | `objectModelTable` / `objectModelArrayTable` in tags `3.5.4`, `3.6.4`, `3.7.0`; SBC-only fields from DuetSoftwareFramework `v3.5.4`, `v3.6.4`, `v3.7.0` (`[SbcProperty(false)]`) |
+| G/M/T parameters | how each letter is read: `server/data/gcode-params-<line>.json` from `scripts/gcode-params-gen.py` (tags `3.5.4`, `3.6.4`, `3.7.0`, with CANlib and DuetSoftwareFramework of the same line); how a value converts: `ConvertToFloat` / `ConvertToInteger` / `ConvertToUnsigned` / `ConvertToDriverId` / `ParseArray` in `ExpressionParser.cpp`, the readers in `StringParser.cpp` and `BinaryParser.cpp` |
 
 ## 1. Settings and diagnostics
 
@@ -30,7 +31,7 @@ disagree, the source wins.
   |---|---|
   | `rrf-type-operand` | operator applied to operand types the firmware rejects (arithmetic, comparison, equality, unary `-` `+` `#`) |
   | `rrf-type-boolean` | non-Boolean where a Boolean is required: `if`/`elif`/`while`, `&&`, `\|\|`, `!`, `?:` condition |
-  | `rrf-type-argument` | function argument of a type the function rejects |
+  | `rrf-type-argument` | function argument of a type the function rejects, or a G/M/T parameter value of a type the command rejects (§12) |
   | `rrf-type-index` | subscript on a non-array, or a non-integer subscript |
   | `rrf-type-value` | a statically known value the firmware rejects (`random(0)`, `vector(-1, …)`, negative index, malformed date string, empty array for `max`/`min`) |
   | `rrf-version` | function, constant or feature not available on the target firmware |
@@ -43,7 +44,8 @@ disagree, the source wins.
   * binary operator: the whole binary sub-expression, left operand start → right operand end;
   * unary operator: operator → end of operand;
   * `&&` / `||` / `?:` condition / `if` / `elif` / `while`: the offending operand or condition only;
-  * function argument: that argument expression; index: the index expression, or the subscripted
+  * function argument: that argument expression; G/M/T parameter value: the expression inside the
+    braces; index: the index expression, or the subscripted
     variable for "not an array";
   * `rrf-version`: the function name / constant token.
 - `TC-DIAG-05` — one diagnostic per root cause. Parents of a sub-expression that has a type error
@@ -328,13 +330,57 @@ mode most type errors are suppressed, but some checks run unconditionally.
 ## 12. G-code command lines
 
 - `TC-GC-01` — expressions inside `{ … }` on G/M/T lines are type-checked internally.
-- `TC-GC-02` — parameter values are not checked against the parameter's type. String-valued
-  parameters accept every type (`StringParser::GetQuotedString` uses `AppendAsString`), so
-  `M98 P{1}` and `M291 P{3.5}` are legal.
+- `TC-GC-02` — a braced value is converted as the firmware converts it for the parameter's letter
+  (`server/data/gcode-params-<line>.json`), and a value no possible type of which converts is an
+  error:
+
+  | the letter is read as | accepts | otherwise the firmware stops with |
+  |---|---|---|
+  | number (`GetFValue`, `GetDistance`, …) | `int`, `uint`, `float` | `"expected numeric operand"` |
+  | integer (`GetIValue`) | `int`, `uint` | `"expected integer value"` |
+  | flag (`TryGetBValue` is `GetIValue() > 0`) | `int`, `uint` | `"expected integer value"` |
+  | unsigned integer (`GetUIValue`, `GetLimitedUIValue`) | `int`, `uint` | `"expected non-negative integer"` |
+  | driver ID (`GetDriverId`) | `int`, `uint`, `float` | `"expected driver ID"`; 3.5 (`ParseFloat`) `"expected numeric operand"` |
+  | text, IP or MAC address, expression | every type | — |
+
+  A float where the firmware reads an integer (`G4 P{var.t / 2}`, `M291 S{2.0}`) is the common
+  case. The message names the parameter and the command (`parameter X of G1 needs a number, got
+  string`). Values are checked by type only: a negative constant for an unsigned letter, a uint
+  above the int32 range, an empty string or array are not reported.
+- `TC-GC-03` — a list parameter (`GetFloatArray`, `GetIntArray`, `GetUnsignedArray`,
+  `GetDriverIdArray`) whose value starts with `{` takes a single value or an array; each element
+  is converted (`ParseArray`), so `M92 E{vector(2, 415)}` is valid and `M92 E{"a", "b"}` is not.
+  An element after a colon (`M92 E400:{…}`) is one value of the list's kind. A single-value
+  parameter does not read past a colon, so `G1 X1:{"a"}` is not checked.
+- `TC-GC-04` — which values are checked:
+  * a letter the command reads; an axis letter (`X Y Z U V W A B C D`) also takes the kinds of the
+    command's axis loop (`G1 A{…}`, `M584 Z{…}`);
+  * a fractional command (`M569.5`) against its own entry; a fraction the firmware gives to a
+    macro file, or does not tell apart, is not checked;
+  * `T{…}` is the tool number of `T`, read with `GetIValue` (`StringParser::DecodeCommand` reads
+    it as `T T{…}`);
+  * `M98` with `P` passes every other letter to the macro as a parameter, of any type, so only
+    `P` is checked; without `P` it reads `R`;
+  * on a line with several commands (`G91 G1 Z{…} G90`) a value belongs to the command before it:
+    a G or M word outside quotes and braces starts the next command, a T does not
+    (`StringParser::FindParameters`);
+  * a letter the command does not read, a command the firmware does not have (a macro such as
+    `M1234`), and a value that is not a parameter (`M117 {…}`) are not checked.
+- `TC-GC-05` — parameters read as text accept every type (`GetQuotedString`,
+  `GetPossiblyQuotedString` and `GetReducedString` use `AppendAsString`): `M98 P{1}`,
+  `M291 P{3.5}`. IP and MAC addresses are read as text too (and not from an expression before 3.7
+  or with a single-board computer); they are not checked.
+- `TC-GC-06` — with a target line, that line's table and conversions decide. With no target a
+  value is an error only when every line reads the letter and rejects the value; the message is
+  the newest line's. A command one line lacks (`M581.1` before 3.7) is then not checked.
+- `TC-GC-07` — with `rrfgcode.sbc`, the commands DuetSoftwareFramework reads itself
+  (`MCodes.Process`, the `sbc` list of the table: `M20`–`M39`, `M98`, `M929`, …) are not checked;
+  other commands are.
 
 ## Not checked
 
-- Parameter values of G/M/T commands against the parameter's type: `G1 X{"10"}` is not reported.
+- G/M/T parameter values beyond their type (`TC-GC-02`): a negative constant for an unsigned
+  letter, values out of a parameter's range, malformed IP or MAC addresses.
 - Object-model fields whose type the generator cannot prove from the firmware tables are `unknown`.
 
 ## Related syntax rules

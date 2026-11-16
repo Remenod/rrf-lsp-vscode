@@ -2,7 +2,7 @@
 """Generate the G-code parameter types the language server checks `{…}` values against.
 
     scripts/gcode-params-gen.py --rrf <RepRapFirmware checkout> --canlib <CANlib checkout>
-                                --out <file.json> [--report]
+                                --dsf <DuetSoftwareFramework checkout> --out <file.json> [--report]
 
 Starting from every `case N:` of the main `switch (code)` in GCodes::HandleGcode and
 GCodes::HandleMcode, and from GCodes::HandleTcode, the generator follows every call that
@@ -25,6 +25,10 @@ The C++ is read as text, without a compiler:
   - commands sent to CAN expansion boards read the letters of a CANlib parameter table, each as
     CanMessageGenericConstructor::PopulateFromCommand reads its descriptor type.
 
+A read whose letter cannot be told from the text is recorded under "?"; its kinds may be those of
+any letter of the command. With a single-board computer, DuetSoftwareFramework reads some
+commands itself (MCodes.Process); those are listed under "sbc".
+
 A fractional command (M569.1) gets an entry of its own when the firmware tells that fraction
 apart (gb.GetCommandFraction() == 1, `switch (gb.GetCommandFraction())`) and does not hand it to
 a macro file; the fraction is followed into callees like the command number.
@@ -40,6 +44,8 @@ ap = argparse.ArgumentParser(description=__doc__.split('\n\n')[0])
 ap.add_argument('--rrf', required=True, help='RepRapFirmware checkout (the directory holding src/)')
 ap.add_argument('--canlib', required=True,
                 help='CANlib checkout of the same firmware line (src/CanMessageGenericTables.h)')
+ap.add_argument('--dsf', required=True,
+                help='DuetSoftwareFramework checkout of the same line (src/DuetControlServer/Codes/Handlers)')
 ap.add_argument('--out', required=True, help='output JSON file')
 ap.add_argument('--report', action='store_true', help='print coverage figures and what could not be resolved')
 ap.add_argument('--no-prune', action='store_true',
@@ -1090,7 +1096,7 @@ commands = {}
 def record(cmd, reads):
     entry = commands.setdefault(cmd, defaultdict(set))
     for letter, ks in reads.items():
-        if letter != '?' and not letter.startswith('__'):
+        if not letter.startswith('__'):
             entry[letter] |= ks
 
 
@@ -1119,6 +1125,33 @@ for handler, letter in (('HandleGcode', 'G'), ('HandleMcode', 'M')):
 for fn in functions.get('HandleTcode', ()):
     record('T', analyse(fn, 0, len(fn.body), set(), 0, frozenset(), {'__frac': -1}))
 
+# ── Commands a single-board computer reads itself ───────────────────────────────────────
+
+
+def sbc_commands():
+    """The case labels of `switch (code.MajorNumber)` in DSF's code handlers (MCodes.Process,
+    MCodeHandler.ProcessAsync since 3.7): commands
+    DuetSoftwareFramework reads itself, with its own conversions, before (or instead of) the firmware."""
+    out = []
+    handlers = os.path.join(opts.dsf, 'src', 'DuetControlServer', 'Codes', 'Handlers')
+    for letter in 'GMT':
+        # MCodes.cs / Process before 3.7, MCodeHandler.cs / ProcessAsync since
+        names = [f'{letter}Codes.cs', f'{letter}CodeHandler.cs']
+        found = [os.path.join(handlers, n) for n in names if os.path.exists(os.path.join(handlers, n))]
+        if not found:
+            raise SystemExit(f'no {" or ".join(names)} in {handlers}')
+        s = strip_comments(open(found[0], errors='replace').read())
+        m = re.search(r'\b(?:Value)?Task<Message\?>\s+Process(?:Async)?\s*\([^)]*\)\s*\{', s)
+        if not m:
+            continue
+        body = s[m.end() - 1:balanced(s, m.end() - 1, '{', '}')]
+        sw = re.search(r'\bswitch\s*\(\s*code\.MajorNumber\s*\)\s*\{', body)
+        if not sw:
+            continue
+        cases = body[sw.end():balanced(body, sw.end() - 1, '{', '}') - 1]
+        out += [f'{letter}{n}' for n in sorted({int(x) for x in re.findall(r'\bcase\s+(\d+)\s*:', top_level(cases))})]
+    return out
+
 # ── Output ────────────────────────────────────────────────────────────────────────
 
 
@@ -1143,10 +1176,12 @@ data = {
         'generator': 'scripts/gcode-params-gen.py',
         'firmware': 'RepRapFirmware ' + describe_checkout(opts.rrf),
         'canlib': 'CANlib ' + describe_checkout(opts.canlib),
+        'sbc': 'DuetSoftwareFramework ' + describe_checkout(opts.dsf),
         'kinds': 'float, int, uint, bool, string, ip, mac, driver (n or board.n), any; [] is a colon-separated list; '
-                 'the letter "axes" stands for every axis letter without an entry of its own',
+                 'the letter "axes" stands for every axis letter, "?" for any letter of the command',
     },
     'commands': {c: {l: '|'.join(sorted(ks)) for l, ks in sorted(commands[c].items())} for c in sorted(commands, key=sort_key)},
+    'sbc': sbc_commands(),
 }
 with open(opts.out, 'w') as f:
     json.dump(data, f, indent=1)
@@ -1158,6 +1193,9 @@ if opts.report:
     print(f'commands {len(data["commands"])}, typed letters {n_letters}, calls followed {stats["calls followed"]}, '
           f'branches dropped {stats["branches dropped"]}, CAN tables {len(stats["can tables"])}')
     print(f'no parameter read ({len(empty)}):', ' '.join(empty))
+    unknown = [f'{c} ({v["?"]})' for c, v in data['commands'].items() if '?' in v]
+    print(f'reads of a letter that could not be told ({len(unknown)}):', ' '.join(unknown))
+    print(f'read by DuetSoftwareFramework itself ({len(data["sbc"])}):', ' '.join(data['sbc']))
     print(f'unresolved ({sum(stats["unresolved"].values())}):')
     for k, n in sorted(stats['unresolved'].items()):
         print(f'  {k} ({n})')

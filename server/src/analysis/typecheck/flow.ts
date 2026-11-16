@@ -14,6 +14,8 @@ import { Node, parseExpression, parseList, unwrap } from './ast';
 import { Ty, UNKNOWN, BOTTOM, union, lacksAll, describe, key, isUnknown, atoms, prim } from './types';
 import { Typer, Scope, TypeDiag, CODE, MSG, narrowFacts, applyFact, NarrowFact, R } from './infer';
 import { Version } from './versions';
+import { checkParamValue } from './params';
+import { commandKey } from '../gcodeParams';
 
 // ── Statements ──────────────────────────────────────────────────────────────
 
@@ -118,16 +120,68 @@ const echo = (s: Stmt) => cached<Echo>(s, () => {
     return { redirect, file, items: parseList(s.tokens.slice(i)) };
 });
 
-/** The `{…}` expressions of a G/M/T command line, braces included. */
-const gcodeGroups = (s: Stmt) => cached<Array<Node | null>>(s, () => {
-    const out: Array<Node | null> = [];
+/** A `{…}` expression of a G/M/T command line (braces included) and the parameter it is the value of. */
+interface GValue {
+    node: Node | null;
+    /** The command word it belongs to: the line may hold several (`G91 G1 Z{…} G90`). */
+    command: string;
+    /** The parameter letter, or null when the value belongs to none (`M117 {…}`). */
+    letter: string | null;
+    /** An element after `:` (`X1:{…}`), not the start of the value. */
+    element: boolean;
+    /** A letter of `M98 P…` other than P: a parameter of the called macro, of any type. */
+    macroArg: boolean;
+}
+
+/** The letter whose value the token at `i` continues, walking back over `1:{…}:` elements. */
+function valueLetter(tokens: Token[], i: number): string | null {
+    let depth = 0;
+    for (let j = i - 1; j >= 0; j--) {
+        const tt = tokens[j].type;
+        if (tt === TokenType.RBrace) depth++;
+        else if (tt === TokenType.LBrace) depth--;
+        else if (depth > 0) continue;
+        else if (tt === TokenType.GCodeWord) return tokens[j].value.toUpperCase();
+        else if (tt !== TokenType.Colon && tt !== TokenType.Integer && tt !== TokenType.Float &&
+            tt !== TokenType.HexInteger && tt !== TokenType.BinInteger && tt !== TokenType.Minus && tt !== TokenType.Plus) return null;
+    }
+    return null;
+}
+
+const gcodeValues = (s: Stmt) => cached<GValue[]>(s, () => {
+    const out: GValue[] = [];
     let depth = 0;
     let from = -1;
-    for (let i = 0; i < s.tokens.length; i++) {
-        const tt = s.tokens[i].type;
+    const t = s.tokens;
+    // A G or M word outside quotes and braces starts the next command (StringParser::FindParameters);
+    // a T further on is a parameter.
+    let command = t[0]?.value ?? '';
+    let segment = 0;
+    const hasP = (start: number) => {
+        for (let j = start + 1; j < t.length && t[j].type !== TokenType.GCode && t[j].type !== TokenType.EOF; j++)
+            if (t[j].type === TokenType.GCodeWord && t[j].value.toUpperCase() === 'P') return true;
+        return false;
+    };
+    let macroCall = commandKey(command) === 'M98' && hasP(0);
+    for (let i = 0; i < t.length; i++) {
+        const tt = t[i].type;
         if (tt === TokenType.EOF || tt === TokenType.Comment) break;
+        if (tt === TokenType.GCode && depth === 0 && i > segment) {
+            command = t[i].value;
+            segment = i;
+            macroCall = commandKey(command) === 'M98' && hasP(i);
+        }
         if (tt === TokenType.LBrace && depth++ === 0) from = i;
-        else if (tt === TokenType.RBrace && depth > 0 && --depth === 0) out.push(parseExpression(s.tokens.slice(from, i + 1)));
+        else if (tt === TokenType.RBrace && depth > 0 && --depth === 0) {
+            const before = t[from - 1];
+            let letter: string | null = null;
+            let element = false;
+            if (before?.type === TokenType.GCodeWord) letter = before.value.toUpperCase();
+            // `T{…}` is read as `T T{…}` (StringParser::DecodeCommand).
+            else if (from === 1 && before.type === TokenType.TCode && before.value.toUpperCase() === 'T') letter = 'T';
+            else if (before?.type === TokenType.Colon) { letter = valueLetter(t, from); element = letter !== null; }
+            out.push({ node: parseExpression(t.slice(from, i + 1)), command, letter, element, macroArg: macroCall && letter !== 'P' });
+        }
     }
     return out;
 });
@@ -240,6 +294,18 @@ class Walker {
 
     private infer(s: Stmt, n: Node, env: Env, ctx: Ctx, note?: string): R {
         return this.typer(s, ctx, note).infer(n, this.scope(env));
+    }
+
+    /** A braced parameter value the firmware rejects for its letter (TC-GC-02..05). */
+    private parameter(s: Stmt, command: string, v: GValue, r: R, ctx: Ctx): void {
+        if (ctx.silent || !this.opts.report || r.failed || !v.node || !v.letter) return;
+        const message = checkParamValue(command, v.letter, v.element, r.t, this.opts.version, this.opts.sbc ?? false);
+        if (!message) return;
+        // The range is the expression inside the braces.
+        const inner = v.node.k === 'brace' && v.node.items.length
+            ? { start: v.node.items[0].s.start, end: v.node.items[v.node.items.length - 1].s.end }
+            : v.node.s;
+        this.result.diagnostics.push({ line: s.line, start: inner.start, end: inner.end, code: CODE.argument, severity: 'error', message });
     }
 
     private narrow(env: Env, cond: Node | null, truthy: boolean): Env {
@@ -399,7 +465,12 @@ class Walker {
                 return null;
             case TokenType.GCode:
             case TokenType.TCode: {
-                for (const g of gcodeGroups(s) ?? []) if (g) this.infer(s, g, env, ctx);
+                for (const v of gcodeValues(s) ?? []) {
+                    if (!v.node) continue;
+                    const r = this.infer(s, v.node, env, ctx);
+                    const command = commandKey(v.command);
+                    if (command && v.letter && !v.macroArg) this.parameter(s, command, v, r, ctx);
+                }
                 return s.tokens[0].value.toUpperCase() === 'M99' ? null : env;
             }
             default:

@@ -3,7 +3,8 @@
   "generator": "scripts/gcode-params-gen.py",
   "firmware": "RepRapFirmware 3.7.0",
   "canlib": "CANlib 3.7.0",
-  "kinds": "float, int, uint, bool, string, ip, mac, driver (n or board.n), any; [] is a colon-separated list; the letter \"axes\" stands for every axis letter without an entry of its own"
+  "sbc": "DuetSoftwareFramework v3.7.0",
+  "kinds": "float, int, uint, bool, string, ip, mac, driver (n or board.n), any; [] is a colon-separated list; the letter \"axes\" stands for every axis letter, \"?\" for any letter of the command"
  },
  "commands": {
   "G0": {
@@ -1257,5 +1258,49 @@
    "R": "uint",
    "T": "int"
   }
- }
+ },
+ "sbc": [
+  "M0",
+  "M1",
+  "M2",
+  "M20",
+  "M21",
+  "M22",
+  "M23",
+  "M24",
+  "M26",
+  "M27",
+  "M28",
+  "M29",
+  "M30",
+  "M32",
+  "M36",
+  "M37",
+  "M38",
+  "M39",
+  "M98",
+  "M111",
+  "M112",
+  "M118",
+  "M122",
+  "M260",
+  "M261",
+  "M409",
+  "M470",
+  "M471",
+  "M472",
+  "M503",
+  "M505",
+  "M550",
+  "M551",
+  "M552",
+  "M581",
+  "M586",
+  "M598",
+  "M606",
+  "M929",
+  "M997",
+  "M998",
+  "M999"
+ ]
 }
