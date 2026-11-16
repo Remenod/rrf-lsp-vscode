@@ -310,7 +310,6 @@ Files are found the way the extension's workspace scan finds them (print jobs un
 ## Known Issues
 
 * **Type checking reports definite errors only**: values the server cannot see (parameters of a macro no file in the workspace calls, `input`, unknown object-model fields) are `unknown`, and an expression is reported only when it fails for every type its operands can have. G-code parameter values are checked by type only (not ranges or addresses), and with `rrfgcode.sbc` the commands DuetSoftwareFramework reads itself are not checked.
-* **Multi-root workspaces**: Settings are read once per server instance rather than per workspace folder, so a setting overridden in one folder of a multi-root workspace is not honored for files in that folder.
 * **Runtime paths are not evaluated**: Expressions such as `P{var.path}` are skipped by design.
 * **Fallback F12 is not a diagnostic source**: Strict fallback path detection is used only for `Go to Definition`; it does not emit "file not found" warnings for arbitrary strings.
 * **Performance**: Path validation adds filesystem I/O. Very large repositories with thousands of files may see minor latency during diagnostics.
