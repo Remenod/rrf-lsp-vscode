@@ -95,8 +95,8 @@ describe('gcode: comments, line numbers, checksums', () => {
     'G28 ; home all',
     '; whole line comment',
     'G1 X10 ; X:10 with colon',
-    { src: 'N123 G1 X10', todo: "line numbers are stripped for the length check but the lexer reports 'unknown command N123'" },
-    { src: 'N123 G1 X10*45', todo: 'same as above, with checksum' },
+    'N123 G1 X10',
+    'N123 G1 X10*45',
     'M117 "has ; semicolon inside string"',
   ]);
 

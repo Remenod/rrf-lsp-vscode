@@ -1,9 +1,11 @@
 // Meta commands: var / global / set / echo / if / elif / else / while / break / continue / abort / param / skip.
 // Each diagnostic site in parser/expression.ts has a triggering case and a near-miss that must stay quiet.
 
-import { describe } from 'node:test';
+import { describe, it } from 'node:test';
+import assert from 'node:assert/strict';
+import { DiagnosticSeverity } from 'vscode-languageserver/node';
 import { expectClean, expectDiag, expectSilent } from '../helpers/cases';
-import { src } from '../helpers/harness';
+import { src, lint } from '../helpers/harness';
 
 describe('var', () => {
   expectSilent([
@@ -151,13 +153,33 @@ describe('abort / skip / param', () => {
   ]);
 });
 
-describe('unknown commands', () => {
+describe('lines that are not commands', () => {
+  // StringParser::DecodeCommand takes the first character as the command letter; anything but G or M
+  // with a number, T, or a meta command ends in GCodes::ActOnCode's "Bad command: …".
   expectDiag([
-    ['frobnicate', /unknown command 'frobnicate'/],
-    ['hello world', /unknown command 'hello'/],
-    ['x = 1', /unknown command 'x'/],
+    ['frobnicate', /"Bad command: frobnicate"/],
+    ['hello world', /"Bad command: hello world"/],
+    ['x = 1', /"Bad command: x = 1"/],
+    ['round(4.5)', /"Bad command: round\(4\.5\)".*write echo round\(4\.5\)/],
+    ['floor(10.5)', /"Bad command: floor\(10\.5\)"/],
+    ['{1 + 2}', /"Bad command: \{1 \+ 2\}"/],
+    ['5', /"Bad command: 5"/],
+    ['"text"', /"Bad command: "text""/],
+    ['var.x', /"Bad command: var\.x"/],
+    ['ech "x"', /"Bad command: ech "x""/],
+    ['G', /"Bad command: G"/],
+    ['M X1', /"Bad command: M X1"/],
+    ['  round(4.5) ; note', /"Bad command: round\(4\.5\)"/],
   ]);
-  expectClean(['G28', 'M999', 'T0', '; comment', '', '   ']);
+  expectClean(['G28', 'M999', 'T0', 'T', 'echo round(4.5)', 'N10 G28', 'N10 G1 X10*45', '; comment', '', '   ']);
+  it('a line of axis words or a (bracketed comment) is a warning: CNC and laser mode accept them', () => {
+    for (const t of ['X10 Y20', 'Z-1.5', '(set up)']) {
+      const ds = lint(t);
+      assert.equal(ds.length, 1, t);
+      assert.equal(ds[0].severity, DiagnosticSeverity.Warning, t);
+      assert.match(ds[0].message, /Bad command/, t);
+    }
+  });
 });
 
 describe('indentation-defined blocks', () => {

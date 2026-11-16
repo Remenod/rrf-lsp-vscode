@@ -618,6 +618,12 @@ export function validateLine(
   const first = tokens[0];
   if (first.type === TokenType.EOF || first.type === TokenType.Comment) return errors;
 
+  // A line number (N123 at the start, StringParser's parsingLineNumber state) is not part of the
+  // command: check the rest of the line.
+  if (first.type === TokenType.Identifier && /^N\d*$/i.test(first.value)) {
+    return validateLine(tokens.slice(1), ctx);
+  }
+
   // Bracket balance is checked unconditionally — mismatched brackets produce
   // errors regardless of which command the line represents.
   checkBracketBalance(tokens, errors);
@@ -1048,13 +1054,59 @@ export function validateLine(
     return errors;
   }
 
-  // ── Unknown command ───────────────────────────────────────────────────────
-  if (first.type === TokenType.Identifier || first.type === TokenType.Unknown) {
-    errors.push({ message: `unknown command '${first.value}'`, ...span(first) });
-    return errors;
-  }
-
+  // ── Not a command ─────────────────────────────────────────────────────────
+  const bad = notACommand(tokens);
+  if (bad) errors.push(bad);
   return errors;
+}
+
+const AXIS_WORD = /^[XYZUVWABCD][-+.]?\d/i;
+const VALUE_START = new Set([
+  TokenType.FunctionName, TokenType.LBrace, TokenType.Integer, TokenType.HexInteger, TokenType.BinInteger,
+  TokenType.Float, TokenType.StringLit, TokenType.CharLit, TokenType.True, TokenType.False, TokenType.Null,
+  TokenType.Pi, TokenType.Iterations, TokenType.Line, TokenType.Result, TokenType.Input, TokenType.Minus,
+  TokenType.Plus, TokenType.Not, TokenType.Hash,
+]);
+
+/**
+ * A line that starts with neither a G, M or T command nor a meta command. StringParser::DecodeCommand
+ * takes its first character as the command letter and GCodes::ActOnCode answers "Bad command: …".
+ * In CNC and laser mode two forms are accepted, so they are warnings: a line of axis words (it repeats
+ * the last G0–G3, Fanuc / LaserWeb style) and, in CNC mode, a (bracketed comment).
+ */
+function notACommand(tokens: Token[]): ParseError | null {
+  const first = tokens[0];
+  // A T with no number goes to GCodes::HandleTcode, not to "Bad command".
+  if (first.type === TokenType.Identifier && /^T/i.test(first.value)) return null;
+  const end = tokens.findIndex(t => t.type === TokenType.EOF || t.type === TokenType.Comment);
+  const command = tokens.slice(0, end < 0 ? undefined : end);
+  const last = command[command.length - 1] ?? first;
+  // The command as written: token values at their columns.
+  let text = '';
+  for (const t of command) text += ' '.repeat(Math.max(0, t.start - (first.start + text.length))) + t.value;
+  const shown = text.length > 60 ? `${text.slice(0, 57)}…` : text;
+  const at = { line: first.line, start: first.start, end: last.end };
+  const bad = `the firmware reports "Bad command: ${shown}"`;
+  const next = tokens[1];
+  const axisWord = first.type === TokenType.Identifier && (AXIS_WORD.test(first.value) || (
+    /^[XYZUVWABCD]$/i.test(first.value) && next !== undefined && next.start === first.end &&
+    [TokenType.Minus, TokenType.Plus, TokenType.Integer, TokenType.Float, TokenType.LBrace].includes(next.type)));
+  if (axisWord) {
+    return {
+      severity: 'warning', ...at,
+      message: `'${first.value}' is not a command: ${bad} — only in CNC or laser mode (M453, M452) does a line of ` +
+        `axis words repeat the last G0–G3 move`,
+    };
+  }
+  if (first.type === TokenType.LParen) {
+    return { severity: 'warning', ...at, message: `this line is not a command: ${bad} — only in CNC mode (M453) is (…) a comment` };
+  }
+  const hint = VALUE_START.has(first.type) ? ` — to show the value, write echo ${shown}` : '';
+  return {
+    ...at,
+    message: `this line is not a command: ${bad}; a line starts with a G, M or T command or a meta command ` +
+      `(echo, var, set, if, while …)${hint}`,
+  };
 }
 
 // ── G-code expression token extractor ────────────────────────────────────────
