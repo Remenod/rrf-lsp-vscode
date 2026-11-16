@@ -89,3 +89,14 @@ export function paramKinds(command: string, letter: string, line: Version, sbc =
     add(e['?']);
     return [...kinds].sort();
 }
+
+/**
+ * Whether some firmware line implements `command` itself. A G or M command none does runs the
+ * macro file of its name (GCodes::TryMacroFile): `M1234` runs sys/M1234.g. A fraction of a
+ * command the firmware has counts as the command's.
+ */
+export function isBuiltIn(command: string): boolean {
+    const base = command.split('.')[0];
+    for (const d of load().values()) if (d.commands.has(command) || d.commands.has(base)) return true;
+    return false;
+}

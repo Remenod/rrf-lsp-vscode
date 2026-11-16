@@ -15,7 +15,8 @@ import { Ty, UNKNOWN, BOTTOM, union, lacksAll, describe, key, isUnknown, atoms, 
 import { Typer, Scope, TypeDiag, CODE, MSG, narrowFacts, applyFact, NarrowFact, R } from './infer';
 import { Version } from './versions';
 import { checkParamValue } from './params';
-import { commandKey } from '../gcodeParams';
+import { commandKey, isBuiltIn } from '../gcodeParams';
+import { stringLiteralText } from '../argValidators';
 
 // ── Statements ──────────────────────────────────────────────────────────────
 
@@ -123,15 +124,31 @@ const echo = (s: Stmt) => cached<Echo>(s, () => {
 /** A `{…}` expression of a G/M/T command line (braces included) and the parameter it is the value of. */
 interface GValue {
     node: Node | null;
+    /** Token index of its `{`. */
+    at: number;
     /** The command word it belongs to: the line may hold several (`G91 G1 Z{…} G90`). */
     command: string;
     /** The parameter letter, or null when the value belongs to none (`M117 {…}`). */
     letter: string | null;
     /** An element after `:` (`X1:{…}`), not the start of the value. */
     element: boolean;
-    /** A letter of `M98 P…` other than P: a parameter of the called macro, of any type. */
+    /** A letter of `M98 P…` other than P, or of a plain `G29`: a parameter of the called macro, of any type. */
     macroArg: boolean;
 }
+
+/**
+ * The macro file a command runs with its letters as parameters (GCodes::DoFileMacroWithParameters):
+ * an RRF path (relative paths are under /sys), or a file the server cannot tell (`M98 P{…}`).
+ */
+export type Callee = { file: string } | { dynamic: true };
+
+/** A call of a macro file: each letter and its value (a braced value's `{` token index, or the parsed tokens). */
+interface MacroCall {
+    callee: Callee;
+    args: Array<{ letter: string; at: number; node: Node | null }>;
+}
+
+interface GLine { values: GValue[]; calls: MacroCall[] }
 
 /** The letter whose value the token at `i` continues, walking back over `1:{…}:` elements. */
 function valueLetter(tokens: Token[], i: number): string | null {
@@ -148,43 +165,118 @@ function valueLetter(tokens: Token[], i: number): string | null {
     return null;
 }
 
-const gcodeValues = (s: Stmt) => cached<GValue[]>(s, () => {
-    const out: GValue[] = [];
+/**
+ * The commands of a line as token ranges [start, end): a G or M word outside quotes and braces
+ * starts the next command, a T further on is a parameter (StringParser::FindParameters).
+ */
+function commandSegments(t: Token[]): Array<[number, number]> {
+    const out: Array<[number, number]> = [];
     let depth = 0;
-    let from = -1;
-    const t = s.tokens;
-    // A G or M word outside quotes and braces starts the next command (StringParser::FindParameters);
-    // a T further on is a parameter.
-    let command = t[0]?.value ?? '';
-    let segment = 0;
-    const hasP = (start: number) => {
-        for (let j = start + 1; j < t.length && t[j].type !== TokenType.GCode && t[j].type !== TokenType.EOF; j++)
-            if (t[j].type === TokenType.GCodeWord && t[j].value.toUpperCase() === 'P') return true;
-        return false;
-    };
-    let macroCall = commandKey(command) === 'M98' && hasP(0);
-    for (let i = 0; i < t.length; i++) {
+    let start = 0;
+    let i = 0;
+    for (; i < t.length; i++) {
         const tt = t[i].type;
         if (tt === TokenType.EOF || tt === TokenType.Comment) break;
-        if (tt === TokenType.GCode && depth === 0 && i > segment) {
-            command = t[i].value;
-            segment = i;
-            macroCall = commandKey(command) === 'M98' && hasP(i);
-        }
-        if (tt === TokenType.LBrace && depth++ === 0) from = i;
-        else if (tt === TokenType.RBrace && depth > 0 && --depth === 0) {
-            const before = t[from - 1];
-            let letter: string | null = null;
-            let element = false;
-            if (before?.type === TokenType.GCodeWord) letter = before.value.toUpperCase();
-            // `T{…}` is read as `T T{…}` (StringParser::DecodeCommand).
-            else if (from === 1 && before.type === TokenType.TCode && before.value.toUpperCase() === 'T') letter = 'T';
-            else if (before?.type === TokenType.Colon) { letter = valueLetter(t, from); element = letter !== null; }
-            out.push({ node: parseExpression(t.slice(from, i + 1)), command, letter, element, macroArg: macroCall && letter !== 'P' });
+        if (tt === TokenType.LBrace) depth++;
+        else if (tt === TokenType.RBrace && depth > 0) depth--;
+        else if (tt === TokenType.GCode && depth === 0 && i > start) { out.push([start, i]); start = i; }
+    }
+    out.push([start, i]);
+    return out;
+}
+
+/** Token types a parameter value of a macro call may start with (StringParser::AddParameters). */
+const VALUE_START = new Set([TokenType.Integer, TokenType.Float, TokenType.HexInteger, TokenType.BinInteger,
+    TokenType.StringLit, TokenType.LBrace, TokenType.Minus, TokenType.Plus]);
+
+/** The macro a command segment runs with parameters, or null (TC-PRM-01). */
+function macroCall(t: Token[], [start, end]: [number, number]): MacroCall | null {
+    const word = t[start];
+    if (word.type !== TokenType.GCode) return null;
+    const command = commandKey(word.value);
+    if (!command) return null;
+    // The letters at brace depth 0, each with the token range of its value.
+    const letters: Array<{ letter: string; from: number; to: number }> = [];
+    let depth = 0;
+    for (let i = start + 1; i < end; i++) {
+        const tt = t[i].type;
+        if (tt === TokenType.LBrace) depth++;
+        else if (tt === TokenType.RBrace && depth > 0) depth--;
+        else if (tt === TokenType.GCodeWord && depth === 0) {
+            if (letters.length) letters[letters.length - 1].to = i;
+            letters.push({ letter: t[i].value.toUpperCase(), from: i + 1, to: end });
         }
     }
-    return out;
+    let callee: Callee;
+    if (command === 'M98') {
+        const p = letters.find(l => l.letter === 'P');
+        if (!p) return null;
+        const v = t.slice(p.from, p.to);
+        const lit = v.length === 1 ? v[0] : v.length === 3 && v[0].type === TokenType.LBrace && v[2].type === TokenType.RBrace ? v[1] : null;
+        const text = lit?.type === TokenType.StringLit ? stringLiteralText(lit) : null;
+        callee = text ? { file: text.text } : { dynamic: true };
+    } else if (command === 'G29') {
+        if (letters.some(l => l.letter === 'S')) return null;     // G29 S… is built in; plain G29 runs mesh.g
+        callee = { file: 'mesh.g' };
+    } else if (command === 'G32') {
+        callee = { file: 'bed.g' };
+    } else if (!isBuiltIn(command)) {
+        callee = { file: `${command}.g` };
+    } else return null;
+    const args: MacroCall['args'] = [];
+    for (const l of letters) {
+        if (command === 'M98' && l.letter === 'P') continue;      // M98 does not pass its P
+        const v = t.slice(l.from, l.to);
+        if (!v.length || !VALUE_START.has(v[0].type)) continue;  // "invalid value for parameter": the macro does not run
+        args.push({ letter: l.letter, at: l.from, node: v[0].type === TokenType.LBrace ? null : parseExpression(v) });
+    }
+    return { callee, args };
+}
+
+const gcodeLine = (s: Stmt) => cached<GLine>(s, () => {
+    const values: GValue[] = [];
+    const t = s.tokens;
+    const segs = commandSegments(t);
+    const calls = segs.map(seg => macroCall(t, seg)).filter((c): c is MacroCall => c !== null);
+    for (const [start, end] of segs) {
+        const command = t[start]?.value ?? '';
+        const key = commandKey(command);
+        const has = (l: string) => t.slice(start + 1, end).some(x => x.type === TokenType.GCodeWord && x.value.toUpperCase() === l);
+        // M98 P… and a plain G29 (which runs sys/mesh.g when it exists) pass their letters to a macro.
+        const macroArgs = (key === 'M98' && has('P')) || (key === 'G29' && !has('S'));
+        let depth = 0;
+        let from = -1;
+        for (let i = start; i < end; i++) {
+            const tt = t[i].type;
+            if (tt === TokenType.LBrace && depth++ === 0) from = i;
+            else if (tt === TokenType.RBrace && depth > 0 && --depth === 0) {
+                const before = t[from - 1];
+                let letter: string | null = null;
+                let element = false;
+                if (before?.type === TokenType.GCodeWord) letter = before.value.toUpperCase();
+                // `T{…}` is read as `T T{…}` (StringParser::DecodeCommand).
+                else if (from === 1 && before.type === TokenType.TCode && before.value.toUpperCase() === 'T') letter = 'T';
+                else if (before?.type === TokenType.Colon) { letter = valueLetter(t, from); element = letter !== null; }
+                values.push({ node: parseExpression(t.slice(from, i + 1)), at: from, command, letter, element, macroArg: macroArgs && letter !== 'P' });
+            }
+        }
+    }
+    return { values, calls };
 });
+
+/** The macro calls of a document, without types: which files it runs (TC-PRM-01). */
+export function docCalls(doc: Doc): Array<{ line: number; callee: Callee; letters: string[] }> {
+    const out: Array<{ line: number; callee: Callee; letters: string[] }> = [];
+    const walk = (stmts: Stmt[]) => {
+        for (const s of stmts) {
+            const tt = first(s);
+            if (tt === TokenType.GCode) for (const c of gcodeLine(s)?.calls ?? []) out.push({ line: s.line, callee: c.callee, letters: c.args.map(a => a.letter) });
+            walk(s.kids);
+        }
+    };
+    walk(doc.roots);
+    return out;
+}
 
 const abortMessage = (s: Stmt) => cached(s, () => parseExpression(cut(s.tokens.slice(1))));
 
@@ -194,21 +286,26 @@ interface Env {
     vars: Map<string, Ty>;
     /** Null-narrowed globals (overrides of the workspace type). */
     globals: Map<string, Ty>;
+    /** Null-narrowed macro parameters (overrides of what the callers pass). */
+    params: Map<string, Ty>;
 }
 type Flow = Env | null;
 
-const clone = (e: Env): Env => ({ vars: new Map(e.vars), globals: new Map(e.globals) });
+const clone = (e: Env): Env => ({ vars: new Map(e.vars), globals: new Map(e.globals), params: new Map(e.params) });
 
 function join(flows: Flow[]): Flow {
     const live = flows.filter((f): f is Env => f !== null);
     if (live.length === 0) return null;
     if (live.length === 1) return clone(live[0]);
-    const out: Env = { vars: new Map(), globals: new Map() };
+    const out: Env = { vars: new Map(), globals: new Map(), params: new Map() };
     for (const [name] of live[0].vars) {
         if (live.every(e => e.vars.has(name))) out.vars.set(name, union(...live.map(e => e.vars.get(name)!)));
     }
     for (const [name] of live[0].globals) {
         if (live.every(e => e.globals.has(name))) out.globals.set(name, union(...live.map(e => e.globals.get(name)!)));
+    }
+    for (const [name] of live[0].params) {
+        if (live.every(e => e.params.has(name))) out.params.set(name, union(...live.map(e => e.params.get(name)!)));
     }
     return out;
 }
@@ -232,18 +329,23 @@ export function widenElements(arr: Ty, depth: number, t: Ty): Ty {
 
 // ── The walk ────────────────────────────────────────────────────────────────
 
-export interface Contribution {
-    name: string;
-    /** `assign`: the global may hold `t`; `elem`: its elements `depth` levels down may. */
-    kind: 'assign' | 'elem';
-    depth: number;
-    t: Ty;
-}
+export type Contribution =
+    | {
+        name: string;
+        /** `assign`: the global may hold `t`; `elem`: its elements `depth` levels down may. */
+        kind: 'assign' | 'elem';
+        depth: number;
+        t: Ty;
+    }
+    /** A macro call on `line`: the file it runs and the type of each parameter it passes. */
+    | { kind: 'call'; callee: Callee; line: number; args: Array<[string, Ty]> };
 
 export interface FlowOptions {
     version: Version | null;
     sbc?: boolean;
     globals(name: string): Ty;
+    /** Type of `param.<name>` in this document (TC-PRM-01); unknown when absent. */
+    params?(name: string): Ty;
     report: boolean;
     record: boolean;
     contribute?: (c: Contribution) => void;
@@ -289,11 +391,21 @@ class Walker {
         return {
             local: n => env.vars.get(n),
             global: n => env.globals.get(n) ?? this.opts.globals(n),
+            param: n => env.params.get(n) ?? this.opts.params?.(n) ?? UNKNOWN,
         };
     }
 
     private infer(s: Stmt, n: Node, env: Env, ctx: Ctx, note?: string): R {
         return this.typer(s, ctx, note).infer(n, this.scope(env));
+    }
+
+    /** The types a macro call passes (TC-PRM-01): a braced value as typed, an unbraced one parsed as the firmware does. */
+    private call(s: Stmt, c: MacroCall, braced: Map<number, R>, env: Env, ctx: Ctx): void {
+        const args: Array<[string, Ty]> = c.args.map(a => {
+            const r = braced.get(a.at) ?? (a.node ? this.typer(s, { ...ctx, silent: true }).infer(a.node, this.scope(env)) : null);
+            return [a.letter, !r || r.failed ? UNKNOWN : r.t];
+        });
+        this.opts.contribute!({ kind: 'call', callee: c.callee, line: s.line, args });
     }
 
     /** A braced parameter value the firmware rejects for its letter (TC-GC-02..05). */
@@ -317,6 +429,9 @@ class Walker {
                 const n = f.key.slice(4);
                 const t = out.vars.get(n);
                 if (t !== undefined) out.vars.set(n, applyFact(t, f.toNull));
+            } else if (f.key.startsWith('param.')) {
+                const n = f.key.slice(6);
+                out.params.set(n, applyFact(out.params.get(n) ?? this.opts.params?.(n) ?? UNKNOWN, f.toNull));
             } else {
                 const n = f.key.slice(7);
                 out.globals.set(n, applyFact(out.globals.get(n) ?? this.opts.globals(n), f.toNull));
@@ -326,7 +441,7 @@ class Walker {
     }
 
     run(roots: Stmt[]): void {
-        this.seq(roots, { vars: new Map(), globals: new Map() }, { loop: null, silent: false });
+        this.seq(roots, { vars: new Map(), globals: new Map(), params: new Map() }, { loop: null, silent: false });
     }
 
     /** A nested block: variables declared inside go out of scope at its end. */
@@ -465,12 +580,16 @@ class Walker {
                 return null;
             case TokenType.GCode:
             case TokenType.TCode: {
-                for (const v of gcodeValues(s) ?? []) {
+                const g = gcodeLine(s);
+                const braced = new Map<number, R>();
+                for (const v of g?.values ?? []) {
                     if (!v.node) continue;
                     const r = this.infer(s, v.node, env, ctx);
+                    braced.set(v.at, r);
                     const command = commandKey(v.command);
                     if (command && v.letter && !v.macroArg) this.parameter(s, command, v, r, ctx);
                 }
+                if (this.opts.contribute) for (const c of g?.calls ?? []) this.call(s, c, braced, env, ctx);
                 return s.tokens[0].value.toUpperCase() === 'M99' ? null : env;
             }
             default:

@@ -4,7 +4,10 @@ import { Hover, MarkupKind } from 'vscode-languageserver/node';
 import { Token, TokenType } from '../parser/types';
 import { SymbolTable } from './symbolTable';
 import { isValidOmPath, getOmPathInfo, isOmIndexAvailable, OmTarget } from './objectModelIndex';
-import { typeAtPosition, globalType, displayType } from './typecheck';
+import { typeAtPosition, globalType, displayType, paramType, paramCallers, CallSite } from './typecheck';
+import { commandKey, isBuiltIn } from './gcodeParams';
+import { getSdRootForUri, uriToFsPath } from './argValidators';
+import * as path from 'path';
 
 interface GCodeDoc { title: string; description: string; anchor?: string }
 type DocDB = Record<string, GCodeDoc>;
@@ -49,6 +52,12 @@ export function buildHover(
         // ── G / M codes ───────────────────────────────────────────────────────
         case TokenType.GCode: {
             const data = gcodeData[tok.value.toUpperCase()];
+            const command = commandKey(tok.value);
+            if (!data && command && !isBuiltIn(command)) {
+                // GCodes::TryMacroFile: a command the firmware does not have runs the macro of its name.
+                return mkHover(`**${tok.value}**\n\nNot a firmware command: it runs the macro \`sys/${command}.g\` if that exists, ` +
+                    `with every parameter letter passed as \`param.<letter>\`.`);
+            }
             if (!data) return mkHover(`**${tok.value}**\n\n*No documentation found.*`);
             const anchor = data.anchor
                 ? `\n\n[Documentation](https://docs.duet3d.com/en/User_manual/Reference/Gcodes${data.anchor})`
@@ -165,11 +174,9 @@ export function buildHover(
 
             if (val.startsWith('param.')) {
                 const name = val.slice(6);
-                return mkHover(
-                    `**${val}**\n\nMacro parameter · Type: \`unknown\` — value passed by the caller via a G-code word.\n\n` +
-                    `*Example:* \`M98 P"${shortUri(uri)}" ${name.toUpperCase()}10\` → \`param.${name.toLowerCase()}\` = 10\n\n` +
-                    `⚠️ *Macro parameters cannot be renamed — the letter is determined by the G-code word at the call site.*`
-                );
+                return mkHover(`**${val}**\n\nMacro parameter · Type: \`${inferred(displayType(paramType(symbolTable, uri, name)))}\`` +
+                    `\n\n${paramSources(paramCallers(symbolTable, uri), name, uri)}\n\n` +
+                    `⚠️ *Macro parameters cannot be renamed — the letter is determined by the G-code word at the call site.*`);
             }
 
             // Bare identifier — reconstruct the full OM path from token context
@@ -285,6 +292,31 @@ function mkHover(md: string): Hover {
     return { contents: { kind: MarkupKind.Markdown, value: md } };
 }
 
+/** Where `param.<name>` gets its values: the calls of this file in the workspace (TC-PRM-01..03). */
+function paramSources(callers: CallSite[], name: string, uri: string): string {
+    if (callers.length === 0) {
+        return `No file in the workspace runs this one, so the value is whatever the caller passes: ` +
+            `\`M98 P"${rrfPath(uri)}" ${name}10\` gives \`param.${name}\` = 10.`;
+    }
+    const where = (c: CallSite) => (c.uri === null ? c.note ?? 'the firmware runs it' : `\`${shortUri(c.uri)}\` line ${c.line + 1}`);
+    const passing = callers.filter(c => c.letters.includes(name));
+    const others = callers.length - passing.length;
+    const shown = passing.slice(0, 5).map(c => `* ${where(c)}`);
+    if (passing.length > shown.length) shown.push(`* … and ${passing.length - shown.length} more`);
+    const head = passing.length
+        ? `Passed by ${passing.length === 1 ? 'this call' : `these ${passing.length} calls`}:\n\n${shown.join('\n')}`
+        : `None of the ${callers.length} call${callers.length === 1 ? '' : 's'} of this file passes ${name}: \`exists(param.${name})\` is false there.`;
+    return passing.length && others ? `${head}\n\n${others} other call${others === 1 ? '' : 's'} do${others === 1 ? 'es' : ''} not pass ${name}.` : head;
+}
+
 function shortUri(uri: string): string {
-    return uri.split('/').slice(-2).join('/');
+    return uri.split('/').slice(-2).map(p => { try { return decodeURIComponent(p); } catch { return p; } }).join('/');
+}
+
+/** The file as the firmware names it (`/macros/Do It`), or its short name outside an SD card. */
+function rrfPath(uri: string): string {
+    const file = uriToFsPath(uri);
+    const sd = getSdRootForUri(uri);
+    if (!file || !sd) return shortUri(uri);
+    return '/' + path.relative(sd, file).split(path.sep).join('/');
 }

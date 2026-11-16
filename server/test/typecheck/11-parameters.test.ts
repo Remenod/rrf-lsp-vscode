@@ -126,6 +126,9 @@ describe('TC-GC-04: which letters are checked', () => {
     expectTypes('M98 R{"x"}', [{ code: CODE.argument, at: '"x"', firmware: 'expected non-negative integer' }]);
     expectNoTypes('M98 P"x.g" R{"abc"}');
     expectNoTypes('M98 P"x.g" S{true} A{null}');
+    // G29 without S runs sys/mesh.g with its letters; with S it reads them itself.
+    expectNoTypes('G29 K{true}');
+    expectTypes('G29 S0 K{true}', [{ code: CODE.argument, at: 'true', firmware: 'expected non-negative integer' }]);
   });
   guard('TC-GC-04', 'a value outside any parameter is not checked', () => expectNoTypes('M117 {1 + 1}'));
   rule('TC-GC-04', 'on a line with several commands, a value belongs to the command before it', () => {
