@@ -155,3 +155,38 @@ export function commandSegments(t: Token[]): Array<[number, number]> {
     return out;
 }
 
+/**
+ * The parameter letters of the command segment [start, end) (see commandSegments), as indexes of
+ * their GCodeWord tokens, read as the firmware reads the values:
+ *  * an unquoted text (GetPossiblyQuotedString), MAC address or IP address runs on to the end, so
+ *    `M540 PDE:AD:BE:EF:CA:FE` and `M551 PMy Secret` have one letter and `stopped` is set;
+ *  * a bare word right after a string letter is that letter's (wrong) value: `Ythermistor` is Y,
+ *    not the letters T, H, E, R …;
+ *  * a lower-case axis letter (`'a`) also sets `stopped`: the letters after it cannot be told apart.
+ * `lines`: the firmware lines whose tables decide how a letter is read.
+ */
+export function segmentWords(t: Token[], start: number, end: number, command: string, lines: readonly Version[],
+    sbc = false): { words: number[]; stopped: boolean } {
+    const words: number[] = [];
+    let depth = 0;
+    for (let i = start + 1; i < end; i++) {
+        const tt = t[i].type;
+        if (tt === TokenType.LBrace) depth++;
+        else if (tt === TokenType.RBrace && depth > 0) depth--;
+        else if (depth > 0) continue;
+        else if (tt === TokenType.GCodeWord) {
+            words.push(i);
+            const letter = t[i].value.toUpperCase();
+            const v = t[i + 1];
+            const unquoted = v && v.type !== TokenType.StringLit && v.type !== TokenType.LBrace;
+            const kinds = lines.flatMap(l => paramKinds(command, letter, l, sbc) ?? []);
+            if (unquoted && kinds.some(k => k === 'text' || k === 'mac' || k === 'ip')) return { words, stopped: true };
+            if (v && v.start === t[i].end && v.type === TokenType.GCodeWord && kinds.some(k => k === 'string' || k === 'any')) {
+                while (i + 1 < end && t[i + 1].start === t[i].end) i++;
+            }
+        } else if (tt === TokenType.CharLit) {
+            return { words, stopped: true };
+        }
+    }
+    return { words, stopped: false };
+}

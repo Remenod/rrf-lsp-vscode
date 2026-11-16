@@ -65,6 +65,15 @@ describe('gcode: duplicate parameters', () => {
       assert.ok(!has(lint(l), /duplicate parameter/), l);
     }
   });
+  it('a value the firmware reads unquoted is not letters', () => {
+    // a MAC address (M540), text (M551 GetPossiblyQuotedString), a bare word after a string letter
+    for (const l of ['M540 PDE:AD:BE:EF:CA:FE', 'M551 PMy Secret Pass', 'M308 S1 Ythermistor T100000']) {
+      assert.ok(!has(lint(l), /duplicate parameter/), l);
+    }
+    // letters before the value, and in a command of their own, still count
+    assert.ok(has(lint('M308 S1 S2 Ythermistor'), /duplicate parameter 'S'/));
+    assert.ok(has(lint('M540 PDE:AD:BE:EF:CA:FE G1 X1 X2'), /duplicate parameter 'X'/));
+  });
 });
 
 describe('gcode: adjacent number and string', () => {

@@ -13,7 +13,7 @@
 import { Diagnostic, DiagnosticSeverity, Range } from 'vscode-languageserver/node';
 import { Token, TokenType } from '../parser/types';
 import { Version } from './typecheck/versions';
-import { AXIS_LETTERS, CommandInfo, commandInfo, commandKey, commandSegments, paramKinds, paramLines } from './gcodeParams';
+import { AXIS_LETTERS, CommandInfo, commandInfo, commandKey, commandSegments, paramLines, segmentWords } from './gcodeParams';
 
 export const PARAM_UNKNOWN_CODE = 'rrf-param-unknown';
 export const PARAM_MISSING_CODE = 'rrf-param-missing';
@@ -24,34 +24,13 @@ interface Letter { letter: string; start: number; end: number }
 
 /** The parameter letters of a command segment, or null when its letters cannot be told apart. */
 function segmentLetters(t: Token[], start: number, end: number, command: string, lines: Version[], sbc: boolean): Letter[] | null {
-    const out: Letter[] = [];
-    let depth = 0;
-    for (let i = start + 1; i < end; i++) {
-        const tt = t[i].type;
-        if (tt === TokenType.LBrace) depth++;
-        else if (tt === TokenType.RBrace && depth > 0) depth--;
-        else if (depth > 0) continue;
-        else if (tt === TokenType.GCodeWord) {
-            let j = i + 1;
-            while (j < end && t[j].type !== TokenType.GCodeWord) j++;
-            const letter = t[i].value.toUpperCase();
-            out.push({ letter, start: t[i].start, end: t[j - 1].end });
-            // An unquoted text value (GetPossiblyQuotedString) runs to the end of the line, and an unquoted
-            // MAC address (DE:AD:BE:EF:CA:FE) reads as letters: what follows is not parameters.
-            const v = t[i + 1];
-            const unquoted = v && v.type !== TokenType.StringLit && v.type !== TokenType.LBrace;
-            const kinds = lines.flatMap(l => paramKinds(command, letter, l, sbc) ?? []);
-            if (unquoted && kinds.some(k => k === 'text' || k === 'mac' || k === 'ip')) return null;
-            // `Ythermistor`: an unquoted word is the value of a string letter (an error the type checks
-            // report), not the letters T, H, E, R …
-            if (v && v.start === t[i].end && v.type === TokenType.GCodeWord && kinds.some(k => k === 'string' || k === 'any')) {
-                while (i + 1 < end && t[i + 1].start === t[i].end) i++;
-            }
-        } else if (tt === TokenType.CharLit) {
-            return null;                                        // 'a: a lower-case axis letter
-        }
-    }
-    return out;
+    const { words, stopped } = segmentWords(t, start, end, command, lines, sbc);
+    if (stopped) return null;
+    return words.map(i => {
+        let j = i + 1;
+        while (j < end && t[j].type !== TokenType.GCodeWord) j++;
+        return { letter: t[i].value.toUpperCase(), start: t[i].start, end: t[j - 1].end };
+    });
 }
 
 /** Diagnostics for the parameter letters of one G/M/T line. */

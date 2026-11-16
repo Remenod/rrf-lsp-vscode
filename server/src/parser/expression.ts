@@ -4,6 +4,7 @@ import { Token, TokenType } from './types';
 import { Lexer } from './lexer';
 import { lineIndent } from '../analysis/utils';
 import { existsProven } from '../analysis/existsGuard';
+import { commandKey, commandSegments, paramLines, segmentWords } from '../analysis/gcodeParams';
 
 export interface ParseError {
   message: string;
@@ -1379,34 +1380,26 @@ function checkDuplicateGCodeParams(tokens: Token[]): ParseError[] {
   const errors: ParseError[] = [];
   const head = tokens[0];
   if (head && RAW_TEXT_COMMANDS.has(head.value.toUpperCase())) return errors;
-  let seen = new Map<string, Token>();   // letter → first occurrence
-
-  for (let i = 1; i < tokens.length; i++) {  // skip the leading G/M/T token
-    const t = tokens[i];
-    if (t.type === TokenType.EOF || t.type === TokenType.Comment) break;
-
-    // A nested inline command (e.g. the 2nd M42 in `M42P2S1M42P3S0`) starts
-    // a fresh parameter scope.
-    if (t.type === TokenType.GCode || t.type === TokenType.TCode) {
-      seen = new Map();
-      continue;
-    }
-
-    if (t.type !== TokenType.GCodeWord) continue;
-
-    const letter = t.value.toUpperCase();
-    const prior = seen.get(letter);
-    if (prior) {
-      errors.push({
-        severity: 'warning',
-        message: `duplicate parameter '${letter}' — already used at column ${prior.start + 1}`,
-        ...span(t),
-      });
-    } else {
-      seen.set(letter, t);
+  // Each command of the line (`M42P2S1M42P3S0`) has its own letters; a value the firmware reads
+  // unquoted (a MAC address, text, `Ythermistor`) is not letters (gcodeParams.segmentWords).
+  for (const [start, end] of commandSegments(tokens)) {
+    const command = commandKey(tokens[start].value) ?? tokens[start].value.toUpperCase();
+    const seen = new Map<string, Token>();   // letter → first occurrence
+    for (const i of segmentWords(tokens, start, end, command, paramLines()).words) {
+      const t = tokens[i];
+      const letter = t.value.toUpperCase();
+      const prior = seen.get(letter);
+      if (prior) {
+        errors.push({
+          severity: 'warning',
+          message: `duplicate parameter '${letter}' — already used at column ${prior.start + 1}`,
+          ...span(t),
+        });
+      } else {
+        seen.set(letter, t);
+      }
     }
   }
-
   return errors;
 }
 
