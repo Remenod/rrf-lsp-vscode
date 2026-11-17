@@ -6,13 +6,15 @@ import { Diagnostic, DiagnosticSeverity, Range } from 'vscode-languageserver/nod
 import { Lexer } from '../parser/lexer';
 import { validateLine, DiagnosticContext } from '../parser/expression';
 import { SymbolTable } from './symbolTable';
-import { isValidOmPath, isOmIndexAvailable } from './objectModelIndex';
+import { isValidOmPath, isOmIndexAvailable, omPathMismatch } from './objectModelIndex';
 import { validateGCodeArgs, validateFunctionPathArgs, getSdRootForUri } from './argValidators';
 import { ArgCheckConfig } from './argCheckConfig';
 import { LINE_TOO_LONG_CODE } from './codeActions';
 import { lineIndent } from './utils';
 import { typeDiagnostics } from './typecheck';
 import { blockDiagnostics } from './blocks';
+import { paramDiagnostics } from './paramChecks';
+import { parseVersion } from './typecheck/versions';
 
 export interface DiagnosticsOptions {
   symbolTable: SymbolTable;
@@ -80,6 +82,7 @@ export function computeDiagnostics(uri: string, text: string, opts: DiagnosticsO
 
   const omTarget = { version: opts.rrfVersion, sbc: opts.sbc };
   const omChecker = isOmIndexAvailable() ? (p: string) => isValidOmPath(p, omTarget) : undefined;
+  const omMismatch = isOmIndexAvailable() ? (p: string) => omPathMismatch(p, omTarget) : undefined;
 
   // Resolve the SD root once per document.  validateGCodeArgs reuses this
   // for every G/M/T line so we don't repeatedly walk the filesystem.
@@ -137,6 +140,7 @@ export function computeDiagnostics(uri: string, text: string, opts: DiagnosticsO
     const ctx: DiagnosticContext = {
       symbolTable, uri, line: i, indent,
       isValidOmPath: omChecker,
+      omPathMismatch: omMismatch,
       docLines: lines,
     };
 
@@ -163,6 +167,11 @@ export function computeDiagnostics(uri: string, text: string, opts: DiagnosticsO
     // Path-taking functions (fileexists/fileread) can appear on any line, not
     // just G/M/T command lines, so they are validated separately.
     diagnostics.push(...validateFunctionPathArgs(tokens, sdRoot, argCheckConfig));
+
+    // Parameter letters the command does not read, or needs.
+    if (argCheckConfig.enabled && argCheckConfig.parameters?.enabled !== false) {
+      diagnostics.push(...paramDiagnostics(tokens, i, parseVersion(opts.rrfVersion), opts.sbc ?? false));
+    }
   }
 
   for (const w of blockDiagnostics(lines)) {

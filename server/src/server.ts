@@ -141,6 +141,8 @@ connection.onInitialize((_params: InitializeParams): InitializeResult => {
       executeCommandProvider: {
         commands: [CMD_ADD_PATH_IGNORE, CMD_SET_MAX_LINE_LENGTH],
       },
+      // Settings are read per workspace folder, so the server follows folders being added or removed.
+      workspace: { workspaceFolders: { supported: true, changeNotifications: true } },
     },
   };
 });
@@ -176,6 +178,17 @@ connection.onInitialized(async () => {
   // Documents opened before the scan finished were typed against an
   // incomplete set of global assignments.
   for (const doc of documents.all()) publishDiagnostics(doc);
+
+  // A folder added to (or removed from) the workspace brings its own settings.
+  try {
+    connection.workspace.onDidChangeWorkspaceFolders(async e => {
+      await refreshConfig();
+      for (const folder of e.added) scanDirectoryForGlobals(URI.parse(folder.uri).fsPath);
+      for (const doc of documents.all()) publishDiagnostics(doc);
+    });
+  } catch {
+    // Clients without workspace folders keep the settings read at start.
+  }
 });
 
 // ── Configuration ────────────────────────────────────────────────────────────
@@ -193,43 +206,80 @@ connection.onInitialized(async () => {
 // A value of 0 disables the check.
 const DEFAULT_MAX_LINE_LENGTH = 255;
 
-let argCheckConfig: ArgCheckConfig = defaultArgCheckConfig();
-let maxLineLength = DEFAULT_MAX_LINE_LENGTH;
-let typeCheckEnabled = true;
-let rrfVersion = '';
-let sbc = false;
+interface Settings {
+  argCheckConfig: ArgCheckConfig;
+  maxLineLength: number;
+  typeCheckEnabled: boolean;
+  rrfVersion: string;
+  sbc: boolean;
+}
+
+const defaultSettings = (): Settings => ({
+  argCheckConfig: defaultArgCheckConfig(), maxLineLength: DEFAULT_MAX_LINE_LENGTH, typeCheckEnabled: true, rrfVersion: '', sbc: false,
+});
+
+// Settings are read for each workspace folder (scopeUri), so a folder's .vscode/settings.json applies
+// to its files also in a multi-root workspace or when it is not the window's only folder; files
+// outside every folder use the window's settings.
+let unscopedSettings: Settings = defaultSettings();
+let folderSettings = new Map<string, Settings>();
 let configLoaded = false;
 
+/** The settings of the workspace folder holding `uri` (the innermost one). */
+function settingsFor(uri: string): Settings {
+  let best: string | undefined;
+  for (const f of folderSettings.keys()) {
+    const prefix = f.endsWith('/') ? f : `${f}/`;
+    if (uri.startsWith(prefix) && (best === undefined || f.length > best.length)) best = f;
+  }
+  return best !== undefined ? folderSettings.get(best)! : unscopedSettings;
+}
+
 /** Firmware line and SBC setting for object-model paths and types. */
-const omTarget = () => ({ version: rrfVersion, sbc });
+const omTarget = (uri: string) => { const s = settingsFor(uri); return { version: s.rrfVersion, sbc: s.sbc }; };
 
 function normaliseMaxLineLength(raw: unknown): number {
   if (typeof raw === 'number' && Number.isFinite(raw) && raw >= 0) return Math.floor(raw);
   return DEFAULT_MAX_LINE_LENGTH;
 }
 
+async function readSettings(scopeUri?: string): Promise<Settings> {
+  const sections = ['rrfgcode.argCheck', 'rrfgcode.maxLineLength', 'rrfgcode.typeCheck', 'rrfgcode.rrfVersion', 'rrfgcode.sbc'];
+  const [argRaw, maxRaw, typeCheckRaw, versionRaw, sbcRaw] =
+    await connection.workspace.getConfiguration(sections.map(section => ({ section, scopeUri })));
+  return {
+    argCheckConfig: normaliseArgCheckConfig(argRaw),
+    maxLineLength: normaliseMaxLineLength(maxRaw),
+    typeCheckEnabled: (typeCheckRaw as { enabled?: unknown } | null)?.enabled !== false,
+    rrfVersion: typeof versionRaw === 'string' ? versionRaw : '',
+    sbc: sbcRaw === true,
+  };
+}
+
 async function refreshConfig(): Promise<void> {
   try {
-    const [argRaw, maxRaw, typeCheckRaw, versionRaw, sbcRaw] = await Promise.all([
-      connection.workspace.getConfiguration('rrfgcode.argCheck'),
-      connection.workspace.getConfiguration('rrfgcode.maxLineLength'),
-      connection.workspace.getConfiguration('rrfgcode.typeCheck'),
-      connection.workspace.getConfiguration('rrfgcode.rrfVersion'),
-      connection.workspace.getConfiguration('rrfgcode.sbc'),
-    ]);
-    argCheckConfig = normaliseArgCheckConfig(argRaw);
-    maxLineLength = normaliseMaxLineLength(maxRaw);
-    typeCheckEnabled = (typeCheckRaw as { enabled?: unknown } | null)?.enabled !== false;
-    rrfVersion = typeof versionRaw === 'string' ? versionRaw : '';
-    sbc = sbcRaw === true;
+    unscopedSettings = await readSettings();
+    const next = new Map<string, Settings>();
+    for (const folder of (await connection.workspace.getWorkspaceFolders()) ?? []) {
+      next.set(folder.uri, await readSettings(folder.uri));
+    }
+    folderSettings = next;
   } catch {
-    argCheckConfig = defaultArgCheckConfig();
-    maxLineLength = DEFAULT_MAX_LINE_LENGTH;
-    typeCheckEnabled = true;
-    rrfVersion = '';
-    sbc = false;
+    unscopedSettings = defaultSettings();
+    folderSettings = new Map();
   }
   configLoaded = true;
+  const describe = (st: Settings) =>
+    `rrfVersion=${JSON.stringify(st.rrfVersion)} sbc=${st.sbc} typeCheck=${st.typeCheckEnabled} ` +
+    `argCheck=${st.argCheckConfig.enabled} parameters=${st.argCheckConfig.parameters.enabled} maxLineLength=${st.maxLineLength}`;
+  connection.console.log(`RRF LSP settings: window ${describe(unscopedSettings)}`);
+  for (const [uri, st] of folderSettings) connection.console.log(`RRF LSP settings: ${uri} ${describe(st)}`);
+}
+
+/** Apply a change to every settings scope (optimistic update before didChangeConfiguration). */
+function updateAllSettings(change: (st: Settings) => Settings): void {
+  unscopedSettings = change(unscopedSettings);
+  folderSettings = new Map([...folderSettings].map(([uri, st]) => [uri, change(st)]));
 }
 
 connection.onDidChangeConfiguration(async () => {
@@ -442,9 +492,13 @@ function publishDiagnostics(doc: TextDocument): void {
 function publishDiagnosticsForText(uri: string, text: string): void {
   connection.sendDiagnostics({
     uri,
-    diagnostics: computeDiagnostics(uri, text, {
-      symbolTable, argCheckConfig, maxLineLength, typeCheck: { enabled: typeCheckEnabled }, rrfVersion, sbc,
-    }),
+    diagnostics: (() => {
+      const st = settingsFor(uri);
+      return computeDiagnostics(uri, text, {
+        symbolTable, argCheckConfig: st.argCheckConfig, maxLineLength: st.maxLineLength,
+        typeCheck: { enabled: st.typeCheckEnabled }, rrfVersion: st.rrfVersion, sbc: st.sbc,
+      });
+    })(),
   });
 }
 
@@ -471,7 +525,7 @@ connection.onHover((params: HoverParams): Hover | null => {
     params.textDocument.uri,
     lineIndent(line),
     lines,
-    omTarget(),
+    omTarget(params.textDocument.uri),
   );
 });
 
@@ -613,13 +667,13 @@ connection.onExecuteCommand(async (params: ExecuteCommandParams) => {
     if (typeof pattern !== 'string' || pattern.length === 0) return;
 
     await refreshConfig();
-    const next = Array.from(new Set([...argCheckConfig.paths.ignore, pattern]));
-
+    let next: string[] = [];
     // Optimistic local update — diagnostic vanishes right away.
-    argCheckConfig = {
-      ...argCheckConfig,
-      paths: { ...argCheckConfig.paths, ignore: next },
-    };
+    updateAllSettings(st => {
+      const ignore = Array.from(new Set([...st.argCheckConfig.paths.ignore, pattern]));
+      if (st === unscopedSettings) next = ignore;
+      return { ...st, argCheckConfig: { ...st.argCheckConfig, paths: { ...st.argCheckConfig.paths, ignore } } };
+    });
     for (const doc of documents.all()) publishDiagnostics(doc);
 
     // Best-effort server-side persistence — only used by clients that don't
@@ -637,11 +691,12 @@ connection.onExecuteCommand(async (params: ExecuteCommandParams) => {
     if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) return;
 
     // Optimistic local update, mirroring CMD_ADD_PATH_IGNORE above.
-    maxLineLength = Math.floor(value);
+    const limit = Math.floor(value);
+    updateAllSettings(st => ({ ...st, maxLineLength: limit }));
     for (const doc of documents.all()) publishDiagnostics(doc);
 
     try {
-      await persistWorkspaceSetting('rrfgcode.maxLineLength', maxLineLength);
+      await persistWorkspaceSetting('rrfgcode.maxLineLength', limit);
     } catch (e) {
       connection.console.warn(`RRF LSP: could not persist maxLineLength: ${e}`);
     }
@@ -830,7 +885,7 @@ connection.onCompletion((params: CompletionParams): CompletionItem[] => {
     const items: CompletionItem[] = [];
     const seen = new Set<string>();
 
-    for (const info of allOmPaths(omTarget())) {
+    for (const info of allOmPaths(omTarget(params.textDocument.uri))) {
       if (!info.path.startsWith(omPrefixWithDot)) continue;
       const rest = info.path.slice(omPrefixWithDot.length);
       const segment = rest.split('.')[0].replace(/\[\]$/, '');
@@ -909,7 +964,7 @@ connection.onCompletion((params: CompletionParams): CompletionItem[] => {
   }
   if (isOmIndexAvailable()) {
     const seen = new Set<string>();
-    for (const info of allOmPaths(omTarget())) {
+    for (const info of allOmPaths(omTarget(params.textDocument.uri))) {
       const top = info.path.split('.')[0];
       if (seen.has(top)) continue;
       seen.add(top);

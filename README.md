@@ -22,18 +22,20 @@ The extension activates automatically for `.g`, `.gcode`, `.gc` and `.gco` files
 * **Go to Definition (F12)**: Quickly navigate to where variables, macros, object references, or file paths are defined.
 * **Variable Renaming**: Safely rename variables across your G-code files, scoped correctly to the block they were declared in.
 * **Find All References (Shift+F12)**: Locate all occurrences of a variable across the workspace.
-* **Duet3D Object Model Support**: Object-model paths are checked, completed and typed (`int`, `float`, `bool`, `string`, …) from RepRapFirmware's own object-model tables, for the line set in `rrfgcode.rrfVersion` (or any of 3.5, 3.6, 3.7 when it is empty). Fields that only exist with a single-board computer are known when `rrfgcode.sbc` is on.
+* **Duet3D Object Model Support**: Object-model paths are checked, completed and typed (`int`, `float`, `bool`, `string`, …) from RepRapFirmware's own object-model tables, for the line set in `rrfgcode.rrfVersion` (or any of 3.5, 3.6, 3.7 when it is empty). Fields that only exist with a single-board computer are known when `rrfgcode.sbc` is on. A field after an index is checked too, and a typo gets the nearest known path (`move.axes[0].homedd` — did you mean `move.axes[0].homed`?). `exists()` of a field the firmware does not have is false rather than an error, so a field a macro tests with it (`if exists(state.newField)`) is not reported there or where the test guards it; a name close to a known one still is, since the test is then always false.
 * **Operators Syntax Check**: Correctly recognizes invalid operator usage patterns.
 * **Scope Check**: Shows diagnostics based on valid variable definition scope — a variable used after its enclosing block has ended is flagged, just as the firmware would reject it at runtime.
 * **Block Structure Check**: Flags orphan `else`/`elif`, `break`/`continue` outside a loop, and `iterations` used outside a loop.
 * **Indentation Check**: Indentation is measured as RepRapFirmware measures it (a space counts 1, a tab moves to the next multiple of 4). Warns where the firmware warns about spaces and tabs mixed in one block, and when an `if`/`elif`/`else`/`while` has nothing indented under it, so the following lines are not part of it (a comment counts as a body).
 * **Parameter Value Check**: `E-{…}` is an error, as in the firmware ("expected number after 'E'"; write `E{-…}`), and `P"text" ^ …` is a warning, because only the quoted text is the value (write `P{"text" ^ …}`).
 * **Macros of any name**: every file in a `macros` folder that looks like G-code is checked, including names with dots such as `Upgrade to 4.0.1`. To also get editor features in such files, associate them with the language, e.g. `"files.associations": { "**/macros/**/*": "rrf-gcode" }`.
-* **Type Check**: Reports expressions RepRapFirmware would reject at runtime because of their types — `"a" + 1`, `if 1`, `abs("x")`, `vector(10 / 2, 0)`, indexing a number, comparing objects — with the firmware's own error text. Types follow variables through `if`/`while`, globals are typed across the workspace (including values persisted with `echo >`), and hover shows the inferred type. Only definite errors are reported. See `rrfgcode.typeCheck.enabled` and `rrfgcode.rrfVersion`.
+* **Type Check**: Reports expressions RepRapFirmware would reject at runtime because of their types — `"a" + 1`, `if 1`, `abs("x")`, `vector(10 / 2, 0)`, indexing a number, comparing objects, a braced G/M/T parameter value the command cannot read (`G1 X{"10"}`, `G4 P{var.t / 2}` where P is an integer) — with the firmware's own error text. Types follow variables through `if`/`while`, globals are typed across the workspace (including values persisted with `echo >`), macro parameters take the types their callers pass (`M98 P"setup.g" S5` makes `param.S` an integer in `setup.g`; event macros such as `heater-fault.g` get the firmware's own), and hover shows the inferred type and, for a parameter, the calls it comes from. Only definite errors are reported. See `rrfgcode.typeCheck.enabled` and `rrfgcode.rrfVersion`.
 * **Path Completion**: Path strings inside supported G-code path parameters and path-taking functions auto-complete to existing files in the current RRF workspace, similar to `#include "..."` in C/C++.
 
 ### Argument Validation & File Path Checking
 
+* **Parameter letters**: a letter the command does not read is a warning (`G1 X1 Q5`, `M106 F500` — RRF 3 sets fan frequency with `M950`), and a letter the command needs is an error when it is missing (`M42 P1` without `S`, `M471` without `S` and `T`), as RepRapFirmware 3.5–3.7 reads them. Commands that pass their letters to a macro (`M98 P…`, a command the firmware does not have) or take the rest of the line as text are not checked. See `rrfgcode.argCheck.parameters.enabled`.
+* **Numbers without braces**: a number the firmware cannot read for the letter is an error (`M106 P-1`: the fan number takes no sign), and one it reads only in part is a warning (`G4 P1.5` is `P1`, `M906 Y1800:1800` sets one current for an axis, `M260 A0x7F` is `A0` — only `{0x7F}` reads hex). Not checked with `rrfgcode.sbc`, where DuetSoftwareFramework parses the numbers.
 * **Command-aware path validation**: The LSP validates only parameters that are known RRF file or directory paths. This avoids treating ordinary strings, UI messages, SSIDs, passwords, or labels as filesystem paths.
 * **Diagnostics for missing paths**: Static file-path literals are checked against the SD-card root and reported as warnings when the referenced file, directory, or required parent directory does not exist.
 * **Correct create/save behavior**: Commands that create, save, log, or rename to a target path validate the parent directory, not the target file itself.
@@ -102,6 +104,7 @@ This extension contributes the following settings:
 
 * `rrfgcode.argCheck.enabled` (bool, default `true`): Master switch for argument validation. When false, no G/M/T command argument checks run.
 * `rrfgcode.argCheck.paths.enabled` (bool, default `true`): Enables or disables file-path existence warnings specifically.
+* `rrfgcode.argCheck.parameters.enabled` (bool, default `true`): Warns about G/M/T parameter letters the command does not read, reports letters the command needs that are missing, and checks numbers written without braces.
 * `rrfgcode.argCheck.paths.ignore` (array, default `[]`): Glob patterns, using forward slashes and relative to the SD-card root, that should not trigger "file not found" warnings.
 
 #### Ignore Pattern Examples
@@ -283,6 +286,18 @@ python3 scripts/om-gen.py --rrf /path/to/RepRapFirmware --dsf /path/to/DuetSoftw
 
 `--report` prints the object-model table entries the generator could not reach from the root.
 
+### Regenerating the G-code parameter data
+
+`server/data/gcode-params-3.5.json`, `gcode-params-3.6.json` and `gcode-params-3.7.json` record how the firmware reads each parameter letter of each G/M/T command (float, integer, string, list …). They come from the same releases as the object-model data, with checkouts of [CANlib](https://github.com/Duet3D/CANlib) (the parameter tables of commands sent to expansion boards) and DuetSoftwareFramework (the commands it reads itself on a single-board computer) for the same line:
+
+```sh
+python3 scripts/gcode-params-gen.py --rrf /path/to/RepRapFirmware --canlib /path/to/CANlib --dsf /path/to/DuetSoftwareFramework --out server/data/gcode-params-3.6.json --report
+```
+
+`--report` prints the commands that read no parameter and anything the generator could not resolve. The generator stops if the firmware's `GCodeBuffer` has a value getter it does not know.
+
+The generator drops the branches that cannot run for a command (`if (mCode == 669)` when building M671). That is the only step that can narrow a parameter's kind, so after regenerating, also run with `--no-prune` and check each letter whose kinds differ between the two outputs against the firmware source.
+
 ### Testing on your own configuration
 
 `npm test` is self-contained. To also lint a real printer configuration, point `RRF_CONFIG_DIR` at any RRF SD-card tree (`sys/`, `macros/`, `filaments/` …) or a repository that holds one:
@@ -295,10 +310,9 @@ Files are found the way the extension's workspace scan finds them (print jobs un
 
 ## Known Issues
 
-* **Type checking reports definite errors only**: values the server cannot see (macro parameters, `input`, unknown object-model fields) are `unknown`, and an expression is reported only when it fails for every type its operands can have. G-code parameter values (`G1 X{"10"}`) are not type-checked.
+* **Type checking reports definite errors only**: values the server cannot see (parameters of a macro no file in the workspace calls, `input`, unknown object-model fields) are `unknown`, and an expression is reported only when it fails for every type its operands can have. G-code parameter values are checked by type only (not ranges or addresses), and with `rrfgcode.sbc` the commands DuetSoftwareFramework reads itself are not checked.
 * **Runtime paths are not evaluated**: Expressions such as `P{var.path}` are skipped by design.
 * **Fallback F12 is not a diagnostic source**: Strict fallback path detection is used only for `Go to Definition`; it does not emit "file not found" warnings for arbitrary strings.
-* **Multi-root workspaces**: Settings are read once per server instance rather than per workspace folder, so a setting overridden in one folder of a multi-root workspace is not honored for files in that folder.
 * **Performance**: Path validation adds filesystem I/O. Very large repositories with thousands of files may see minor latency during diagnostics.
 
 See the [releases page](https://github.com/Remenod/rrf-lsp-vscode/releases) for the full history of changes between versions.
@@ -329,4 +343,4 @@ The G-Code documentation data included in this project (`server/data/*`) is deri
 * Licensed under the [Creative Commons Attribution-ShareAlike 4.0 International (CC BY-SA 4.0)](server/data/LICENSE).
 * The data has been parsed and transformed into JSON format by Remenod.
 
-The object-model data (`server/data/om-*.json`) is generated by `scripts/om-gen.py` from the [RepRapFirmware](https://github.com/Duet3D/RepRapFirmware) sources (GPL-3.0) and, for the fields only a single-board computer provides, the [DuetSoftwareFramework](https://github.com/Duet3D/DuetSoftwareFramework) object model; each file names the releases it was built from.
+The object-model data (`server/data/om-*.json`) is generated by `scripts/om-gen.py` from the [RepRapFirmware](https://github.com/Duet3D/RepRapFirmware) sources (GPL-3.0) and, for the fields only a single-board computer provides, the [DuetSoftwareFramework](https://github.com/Duet3D/DuetSoftwareFramework) object model; each file names the releases it was built from. The G-code parameter data (`server/data/gcode-params-*.json`) is generated by `scripts/gcode-params-gen.py` from the RepRapFirmware, [CANlib](https://github.com/Duet3D/CANlib) and DuetSoftwareFramework sources (GPL-3.0) in the same way.

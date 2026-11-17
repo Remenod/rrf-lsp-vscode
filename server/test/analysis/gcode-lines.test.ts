@@ -65,6 +65,15 @@ describe('gcode: duplicate parameters', () => {
       assert.ok(!has(lint(l), /duplicate parameter/), l);
     }
   });
+  it('a value the firmware reads unquoted is not letters', () => {
+    // a MAC address (M540), text (M551 GetPossiblyQuotedString), a bare word after a string letter
+    for (const l of ['M540 PDE:AD:BE:EF:CA:FE', 'M551 PMy Secret Pass', 'M308 S1 Ythermistor T100000']) {
+      assert.ok(!has(lint(l), /duplicate parameter/), l);
+    }
+    // letters before the value, and in a command of their own, still count
+    assert.ok(has(lint('M308 S1 S2 Ythermistor'), /duplicate parameter 'S'/));
+    assert.ok(has(lint('M540 PDE:AD:BE:EF:CA:FE G1 X1 X2'), /duplicate parameter 'X'/));
+  });
 });
 
 describe('gcode: adjacent number and string', () => {
@@ -87,7 +96,7 @@ describe('gcode: expression braces inside commands', () => {
     ['G1 X{(1}', /unclosed/],
     ['G1 X{1', /unclosed/],
   ]);
-  expectSilent(['G1 X{1+2}', 'M291 K{"a","b"} S4', 'G1 X{abs(-1)}', 'G1 X{max(1,2,3)}']);
+  expectSilent(['G1 X{1+2}', 'M291 P"x" K{"a","b"} S4', 'G1 X{abs(-1)}', 'G1 X{max(1,2,3)}']);
 });
 
 describe('gcode: comments, line numbers, checksums', () => {
@@ -95,8 +104,8 @@ describe('gcode: comments, line numbers, checksums', () => {
     'G28 ; home all',
     '; whole line comment',
     'G1 X10 ; X:10 with colon',
-    { src: 'N123 G1 X10', todo: "line numbers are stripped for the length check but the lexer reports 'unknown command N123'" },
-    { src: 'N123 G1 X10*45', todo: 'same as above, with checksum' },
+    'N123 G1 X10',
+    'N123 G1 X10*45',
     'M117 "has ; semicolon inside string"',
   ]);
 

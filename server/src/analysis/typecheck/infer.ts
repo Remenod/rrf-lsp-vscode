@@ -78,6 +78,8 @@ export interface Scope {
     /** Type of `var.<name>` here; undefined when it is not declared. */
     local(name: string): Ty | undefined;
     global(name: string): Ty;
+    /** Type of `param.<name>`: what the callers of this file pass (TC-PRM-01). */
+    param(name: string): Ty;
 }
 
 export interface InferOptions {
@@ -126,7 +128,7 @@ export function narrowFacts(n: Node, truthy: boolean): NarrowFact[] {
     const isNull = (x: Node) => x.k === 'const' && x.name === 'null';
     const subject = isNull(r) ? l : isNull(l) ? r : null;
     if (!subject || subject.k !== 'ident') return [];
-    if (!subject.name.startsWith('var.') && !subject.name.startsWith('global.')) return [];
+    if (!subject.name.startsWith('var.') && !subject.name.startsWith('global.') && !subject.name.startsWith('param.')) return [];
     const equalsNull = e.op === '==';
     return [{ key: subject.name, toNull: equalsNull === truthy }];
 }
@@ -148,6 +150,7 @@ export function narrowScope(scope: Scope, facts: NarrowFact[]): Scope {
     return {
         local: n => apply(`var.${n}`, scope.local(n)),
         global: n => apply(`global.${n}`, scope.global(n))!,
+        param: n => apply(`param.${n}`, scope.param(n))!,
     };
 }
 
@@ -378,7 +381,7 @@ export class Typer {
         // already report it, so it has no value to check (bottom).
         if (n.name.startsWith('var.')) t = scope.local(n.name.slice(4)) ?? BOTTOM;
         else if (n.name.startsWith('global.')) t = scope.global(n.name.slice(7));
-        else if (n.name.startsWith('param.')) t = UNKNOWN;
+        else if (n.name.startsWith('param.')) t = scope.param(n.name.slice(6));
         else return { t: omType(n.name, { version: this.o.version, sbc: this.o.sbc }) };
         this.o.record?.(n.s.start, t);
         return { t };

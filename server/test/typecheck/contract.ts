@@ -6,6 +6,7 @@
 //  * rule() / guard() — a test of a SPEC rule: something reported / something kept silent.
 
 import assert from 'node:assert/strict';
+import { pathToFileURL } from 'node:url';
 import { it } from 'node:test';
 import { Diagnostic, DiagnosticSeverity } from 'vscode-languageserver/node';
 import { lint, lex, readData, LintOptions } from '../helpers/harness';
@@ -270,13 +271,14 @@ export const URI = 'untitled:test.g';
 export function hoverText(text: string, line: number, needle: string, occurrence = 0, opts: TcOptions = {}): string | null {
   if (opts.rrfVersion !== undefined) throw new Error('hoverText: hover is version-neutral; do not pass rrfVersion');
   const st = new SymbolTable();
+  const uri = opts.file ? pathToFileURL(opts.file).toString() : URI;
   for (const [u, t] of Object.entries(opts.extraDocs ?? {})) st.indexDocument(u, t);
-  st.indexDocument(URI, text);
+  st.indexDocument(uri, text);
   const lines = text.split(/\r?\n/);
   const span = locate(text, needle, line, occurrence);
   const l = lines[line];
   const indent = l.length - l.trimStart().length;
-  const h = buildHover(lex(l, line), span.start + 1, line, DATA.gcode, DATA.meta, DATA.ops, DATA.fns, st, URI, indent, lines);
+  const h = buildHover(lex(l, line), span.start + 1, line, DATA.gcode, DATA.meta, DATA.ops, DATA.fns, st, uri, indent, lines);
   if (!h) return null;
   const c: any = h.contents;
   return typeof c === 'string' ? c : c.value ?? null;

@@ -29,11 +29,15 @@ export interface ArgCheckConfig {
          */
         ignore: string[];
     };
+    /** Sub-checker: parameter letters the command does not read, or needs (paramChecks.ts). */
+    parameters: {
+        enabled: boolean;
+    };
 }
 
 /** Default configuration — all checks on, no ignores. */
 export function defaultArgCheckConfig(): ArgCheckConfig {
-    return { enabled: true, paths: { enabled: true, ignore: [] } };
+    return { enabled: true, paths: { enabled: true, ignore: [] }, parameters: { enabled: true } };
 }
 
 /**
@@ -51,6 +55,9 @@ export function normaliseArgCheckConfig(raw: any): ArgCheckConfig {
             ignore: Array.isArray(raw.paths?.ignore)
                 ? raw.paths.ignore.filter((x: any) => typeof x === 'string')
                 : d.paths.ignore,
+        },
+        parameters: {
+            enabled: typeof raw.parameters?.enabled === 'boolean' ? raw.parameters.enabled : d.parameters.enabled,
         },
     };
 }

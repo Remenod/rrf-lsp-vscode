@@ -75,6 +75,11 @@ describe('block lines with nothing indented under them', () => {
   it('a comment is a body (an intended no-op)', () => {
     assert.deepEqual(at(src('if input == 0', '  ; keep the defaults', 'elif input == 1', '  echo 1'), EMPTY), []);
   });
+  it('an unindented comment between the keyword and its block is skipped, as the firmware skips it', () => {
+    assert.deepEqual(at(src('if true', '; a note', '  echo 1'), EMPTY), []);
+    assert.deepEqual(at(src('if true', '; a note', 'echo 1'), EMPTY), [0]);
+    assert.deepEqual(at(src('if true', '  echo 1', 'else', '; a note', '', '  echo 2'), EMPTY), []);
+  });
   it('ordinary blocks are fine', () => {
     assert.deepEqual(at(src('if true', '  echo 1', 'elif false', '  echo 2', 'else', '  echo 3', 'while iterations < 2', '  echo 4'), EMPTY), []);
   });

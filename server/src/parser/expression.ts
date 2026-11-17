@@ -3,6 +3,8 @@
 import { Token, TokenType } from './types';
 import { Lexer } from './lexer';
 import { lineIndent } from '../analysis/utils';
+import { existsProven, omExistsProven } from '../analysis/existsGuard';
+import { commandKey, commandSegments, paramLines, segmentWords } from '../analysis/gcodeParams';
 
 export interface ParseError {
   message: string;
@@ -40,6 +42,8 @@ export interface DiagnosticContext {
   /** Full document split into lines — required for accurate scope analysis. */
   docLines?: string[];
   isValidOmPath?: (path: string) => boolean;
+  /** Where an object-model path (indexes as []) leaves the model, or null (objectModelIndex.omPathMismatch). */
+  omPathMismatch?: (path: string) => { at: number; name?: string } | null;
 }
 
 // ── Binary operators (priority table) ────────────────────────────────────────
@@ -618,6 +622,12 @@ export function validateLine(
   const first = tokens[0];
   if (first.type === TokenType.EOF || first.type === TokenType.Comment) return errors;
 
+  // A line number (N123 at the start, StringParser's parsingLineNumber state) is not part of the
+  // command: check the rest of the line.
+  if (first.type === TokenType.Identifier && /^N\d*$/i.test(first.value)) {
+    return validateLine(tokens.slice(1), ctx);
+  }
+
   // Bracket balance is checked unconditionally — mismatched brackets produce
   // errors regardless of which command the line represents.
   checkBracketBalance(tokens, errors);
@@ -952,10 +962,11 @@ export function validateLine(
       }
     }
 
-    // Undefined global → warning only (may be declared elsewhere / at runtime)
+    // Undefined global → warning only (may be declared elsewhere / at runtime), and nothing where
+    // an exists() test proves it exists (existsGuard.ts)
     if (val.startsWith('global.') && ctx) {
       const globalName = val.slice(7).split('[')[0];
-      if (!ctx.symbolTable.lookupGlobal(globalName)) {
+      if (!ctx.symbolTable.lookupGlobal(globalName) && !existsProven(tokens, targetTok, `global.${globalName}`, ctx)) {
         errors.push({
           severity: 'warning',
           message:
@@ -1048,13 +1059,59 @@ export function validateLine(
     return errors;
   }
 
-  // ── Unknown command ───────────────────────────────────────────────────────
-  if (first.type === TokenType.Identifier || first.type === TokenType.Unknown) {
-    errors.push({ message: `unknown command '${first.value}'`, ...span(first) });
-    return errors;
-  }
-
+  // ── Not a command ─────────────────────────────────────────────────────────
+  const bad = notACommand(tokens);
+  if (bad) errors.push(bad);
   return errors;
+}
+
+const AXIS_WORD = /^[XYZUVWABCD][-+.]?\d/i;
+const VALUE_START = new Set([
+  TokenType.FunctionName, TokenType.LBrace, TokenType.Integer, TokenType.HexInteger, TokenType.BinInteger,
+  TokenType.Float, TokenType.StringLit, TokenType.CharLit, TokenType.True, TokenType.False, TokenType.Null,
+  TokenType.Pi, TokenType.Iterations, TokenType.Line, TokenType.Result, TokenType.Input, TokenType.Minus,
+  TokenType.Plus, TokenType.Not, TokenType.Hash,
+]);
+
+/**
+ * A line that starts with neither a G, M or T command nor a meta command. StringParser::DecodeCommand
+ * takes its first character as the command letter and GCodes::ActOnCode answers "Bad command: …".
+ * In CNC and laser mode two forms are accepted, so they are warnings: a line of axis words (it repeats
+ * the last G0–G3, Fanuc / LaserWeb style) and, in CNC mode, a (bracketed comment).
+ */
+function notACommand(tokens: Token[]): ParseError | null {
+  const first = tokens[0];
+  // A T with no number goes to GCodes::HandleTcode, not to "Bad command".
+  if (first.type === TokenType.Identifier && /^T/i.test(first.value)) return null;
+  const end = tokens.findIndex(t => t.type === TokenType.EOF || t.type === TokenType.Comment);
+  const command = tokens.slice(0, end < 0 ? undefined : end);
+  const last = command[command.length - 1] ?? first;
+  // The command as written: token values at their columns.
+  let text = '';
+  for (const t of command) text += ' '.repeat(Math.max(0, t.start - (first.start + text.length))) + t.value;
+  const shown = text.length > 60 ? `${text.slice(0, 57)}…` : text;
+  const at = { line: first.line, start: first.start, end: last.end };
+  const bad = `the firmware reports "Bad command: ${shown}"`;
+  const next = tokens[1];
+  const axisWord = first.type === TokenType.Identifier && (AXIS_WORD.test(first.value) || (
+    /^[XYZUVWABCD]$/i.test(first.value) && next !== undefined && next.start === first.end &&
+    [TokenType.Minus, TokenType.Plus, TokenType.Integer, TokenType.Float, TokenType.LBrace].includes(next.type)));
+  if (axisWord) {
+    return {
+      severity: 'warning', ...at,
+      message: `'${first.value}' is not a command: ${bad} — only in CNC or laser mode (M453, M452) does a line of ` +
+        `axis words repeat the last G0–G3 move`,
+    };
+  }
+  if (first.type === TokenType.LParen) {
+    return { severity: 'warning', ...at, message: `this line is not a command: ${bad} — only in CNC mode (M453) is (…) a comment` };
+  }
+  const hint = VALUE_START.has(first.type) ? ` — to show the value, write echo ${shown}` : '';
+  return {
+    ...at,
+    message: `this line is not a command: ${bad}; a line starts with a G, M or T command or a meta command ` +
+      `(echo, var, set, if, while …)${hint}`,
+  };
 }
 
 // ── G-code expression token extractor ────────────────────────────────────────
@@ -1174,7 +1231,10 @@ function checkConditionalChain(first: Token, ctx: DiagnosticContext, errors: Par
 // "homed" follows a Dot → skip it.
 function checkBareIdentifiers(tokens: Token[], ctx: DiagnosticContext): ParseError[] {
   const errors: ParseError[] = [];
-  if (!ctx.isValidOmPath) return errors;
+  const isValid = ctx.isValidOmPath;
+  if (!isValid) return errors;
+  const mismatch: (p: string) => { at: number; name?: string } | null =
+    ctx.omPathMismatch ?? (p => (isValid(p) ? null : { at: 0 }));
 
   for (let i = 0; i < tokens.length; i++) {
     const t = tokens[i];
@@ -1182,14 +1242,45 @@ function checkBareIdentifiers(tokens: Token[], ctx: DiagnosticContext): ParseErr
     const v = t.value;
     if (v.startsWith('var.') || v.startsWith('global.') || v.startsWith('param.')) continue;
     if (i > 0 && tokens[i - 1]?.type === TokenType.Dot) continue;
-    const normalised = v.replace(/\[\d+\]/g, '[]');
-    if (!ctx.isValidOmPath(normalised)) {
-      errors.push({
-        severity: 'warning',
-        message: `'${v}' is not a known Object Model path — did you mean 'var.${v}'?`,
-        ...span(t),
-      });
+    // The whole path: `move.axes[0].homed` lexes as the identifier, an index, '.' and a field.
+    const segs: Array<{ name: string; indexes: string[]; tok: Token }> = v.split('.').map(name => ({ name, indexes: [], tok: t }));
+    for (let j = i + 1; ;) {
+      if (tokens[j]?.type === TokenType.LBracket) {
+        const from = j;
+        let depth = 0;
+        for (; j < tokens.length; j++) {
+          if (tokens[j].type === TokenType.LBracket) depth++;
+          else if (tokens[j].type === TokenType.RBracket && --depth === 0) break;
+        }
+        segs[segs.length - 1].indexes.push(tokens.slice(from + 1, j).map(x => x.value).join(''));
+        j++;
+      } else if (tokens[j - 1]?.type === TokenType.RBracket && tokens[j]?.type === TokenType.Dot &&
+        tokens[j + 1]?.type === TokenType.Identifier) {
+        const field = tokens[j + 1];
+        segs.push(...field.value.split('.').map(name => ({ name, indexes: [] as string[], tok: field })));
+        j += 2;
+      } else break;
     }
+    const norm = (upTo: number) => segs.slice(0, upTo).map(s => s.name + '[]'.repeat(s.indexes.length)).join('.');
+    const m = mismatch(norm(segs.length));
+    if (!m) continue;
+    // exists() of an unknown field is false, not an error: `exists(state.newField)` tests whether this
+    // firmware has it, and what that test guards reads it only when it does (existsGuard.ts). A name
+    // close to a known one is a typo, and an unknown root is not a field test.
+    const inExists = isInsideExistsArg(tokens, i);
+    if (inExists ? m.at > 0 && m.name === undefined : omExistsProven(tokens, t, norm(m.at + 1), ctx)) continue;
+    const text = (names: string[], upTo = segs.length) =>
+      segs.slice(0, upTo).map((s, k) => names[k] + s.indexes.map(x => `[${x}]`).join('')).join('.');
+    const names = segs.map(s => s.name);
+    let message = `'${text(names)}' is not a known Object Model path${inExists ? ', so exists() of it is always false' : ''}`;
+    if (m.name !== undefined) {
+      message += ` — did you mean '${text(names.map((n, k) => (k === m.at ? m.name! : n)))}'?`;
+    } else if (segs.length === 1 && segs[0].indexes.length === 0) {
+      message += ` — did you mean 'var.${v}'?`;
+    } else if (m.at > 0 && m.at < segs.length) {
+      message += `: '${text(names, m.at)}' has no field '${segs[m.at].name}'`;
+    }
+    errors.push({ severity: 'warning', message, ...span(segs[Math.min(m.at, segs.length - 1)].tok) });
   }
   return errors;
 }
@@ -1325,34 +1416,26 @@ function checkDuplicateGCodeParams(tokens: Token[]): ParseError[] {
   const errors: ParseError[] = [];
   const head = tokens[0];
   if (head && RAW_TEXT_COMMANDS.has(head.value.toUpperCase())) return errors;
-  let seen = new Map<string, Token>();   // letter → first occurrence
-
-  for (let i = 1; i < tokens.length; i++) {  // skip the leading G/M/T token
-    const t = tokens[i];
-    if (t.type === TokenType.EOF || t.type === TokenType.Comment) break;
-
-    // A nested inline command (e.g. the 2nd M42 in `M42P2S1M42P3S0`) starts
-    // a fresh parameter scope.
-    if (t.type === TokenType.GCode || t.type === TokenType.TCode) {
-      seen = new Map();
-      continue;
-    }
-
-    if (t.type !== TokenType.GCodeWord) continue;
-
-    const letter = t.value.toUpperCase();
-    const prior = seen.get(letter);
-    if (prior) {
-      errors.push({
-        severity: 'warning',
-        message: `duplicate parameter '${letter}' — already used at column ${prior.start + 1}`,
-        ...span(t),
-      });
-    } else {
-      seen.set(letter, t);
+  // Each command of the line (`M42P2S1M42P3S0`) has its own letters; a value the firmware reads
+  // unquoted (a MAC address, text, `Ythermistor`) is not letters (gcodeParams.segmentWords).
+  for (const [start, end] of commandSegments(tokens)) {
+    const command = commandKey(tokens[start].value) ?? tokens[start].value.toUpperCase();
+    const seen = new Map<string, Token>();   // letter → first occurrence
+    for (const i of segmentWords(tokens, start, end, command, paramLines()).words) {
+      const t = tokens[i];
+      const letter = t.value.toUpperCase();
+      const prior = seen.get(letter);
+      if (prior) {
+        errors.push({
+          severity: 'warning',
+          message: `duplicate parameter '${letter}' — already used at column ${prior.start + 1}`,
+          ...span(t),
+        });
+      } else {
+        seen.set(letter, t);
+      }
     }
   }
-
   return errors;
 }
 
@@ -1421,7 +1504,8 @@ function checkDeclaredVars(
       // Exempt: direct argument to exists()
       if (isInsideExistsArg(tokens, i)) continue;
       const name = v.slice(7).split('[')[0];
-      if (!ctx.symbolTable.lookupGlobal(name)) {
+      // Nothing where an exists() test proves a global created at run time exists (existsGuard.ts).
+      if (!ctx.symbolTable.lookupGlobal(name) && !existsProven(tokens, t, `global.${name}`, ctx)) {
         errors.push({
           severity: 'warning',
           message:

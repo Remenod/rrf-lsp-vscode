@@ -536,7 +536,7 @@ export function invalidateSdRootCache(uri?: string): void {
     else sdRootCache.clear();
 }
 
-function uriToFsPath(uri: string): string | null {
+export function uriToFsPath(uri: string): string | null {
     if (!uri.startsWith('file://')) return null;
     let p = decodeURIComponent(uri.slice('file://'.length));
     if (/^\/[A-Za-z]:/.test(p)) p = p.slice(1);

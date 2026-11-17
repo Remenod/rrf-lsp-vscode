@@ -338,6 +338,6 @@ function inferTypeFromTokens(tokens: Token[], startIdx: number, lineText: string
     const node = parseExpression(tokens.slice(startIdx));
     if (!node) return 'unknown';
     const r = new Typer({ line: 0, lineText, version: null, report: null, record: null })
-        .infer(node, { local: () => undefined, global: () => UNKNOWN });
+        .infer(node, { local: () => undefined, global: () => UNKNOWN, param: () => UNKNOWN });
     return r.failed ? 'unknown' : coarse(r.t);
 }
