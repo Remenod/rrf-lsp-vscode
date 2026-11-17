@@ -32,7 +32,7 @@ export function existsProven(tokens: Token[], usage: Token, qualified: string, s
 }
 
 /**
- * The same for an object-model path (`state.vmFeatureLevel`, indexes as `[]`): `exists()` of it, or of
+ * The same for an object-model path (`state.newField`, indexes as `[]`): `exists()` of it, or of
  * a path under it (`exists(move.axes[0].foo.bar)` proves `move.axes[].foo`), proves it. Indexes are
  * not compared: the fields of every element of an array are the same.
  */
